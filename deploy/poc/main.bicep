@@ -13,28 +13,30 @@
 // After the deployment, put the test CA into the source vault (ARM cannot generate keys): scripts/make_testca.py
 targetScope = 'subscription'
 
-@minLength(3)
+// Every parameter that has a computed value defaults to an empty string, and the template computes the value (see the variables
+// below). A literal default shows correctly in the portal form and in every other client; a template expression would not.
+
 @maxLength(8)
-@description('Short lower-case token (3-8 letters or digits) that makes the global names unique. The default is stable per subscription, so a re-deployment updates the same resources.')
-param suffix string = substring(uniqueString(subscription().id), 0, 5)
+@description('Short lower-case token (3-8 letters or digits) that makes the global names unique. Leave empty to derive 5 characters from the subscription id: that is stable per subscription, so a re-deployment updates the same resources.')
+param suffix string = ''
 
 @description('Used in resource group names: rg-<namePrefix>-hub, -spoke-a and -spoke-b.')
 param namePrefix string = 'kvsync-arm'
 
-@description('Region of the hub resources (function apps, source vault, storage). It must support Flex Consumption.')
-param hubLocation string = deployment().location
+@description('Region of the hub resources (function apps, source vault, storage). It must support Flex Consumption. Leave empty to use the region you selected for the deployment.')
+param hubLocation string = ''
 
-@description('Subscription of the first destination vault. May equal the hub subscription (the default). Any subscription of the same tenant works; you need Owner or User Access Administrator there.')
-param spokeASubscriptionId string = subscription().subscriptionId
+@description('Subscription id of the first destination vault. Leave empty to use the hub subscription. Any subscription of the same tenant works; you need Owner or User Access Administrator there.')
+param spokeASubscriptionId string = ''
 
-@description('Region of the first destination vault.')
-param spokeALocation string = hubLocation
+@description('Region of the first destination vault. Leave empty to use the hub region.')
+param spokeALocation string = ''
 
-@description('Subscription of the second destination vault. May equal the hub subscription (the default).')
-param spokeBSubscriptionId string = subscription().subscriptionId
+@description('Subscription id of the second destination vault. Leave empty to use the hub subscription.')
+param spokeBSubscriptionId string = ''
 
-@description('Region of the second destination vault.')
-param spokeBLocation string = hubLocation
+@description('Region of the second destination vault. Leave empty to use the hub region.')
+param spokeBLocation string = ''
 
 @description('Purge protection on destination vault A. Some landing-zone policies require it. Once on it cannot be turned off.')
 param spokeAPurgeProtection bool = true
@@ -45,14 +47,14 @@ param spokeBPurgeProtection bool = false
 @description('Value of the owner tag. Empty = no owner tag.')
 param ownerTag string = ''
 
-@description('Value of the delete-after tag (a date, yyyy-mm-dd). The deployment is a throw-away proof of concept.')
-param deleteAfter string = dateTimeAdd(utcNow(), 'P30D', 'yyyy-MM-dd')
+@description('Value of the delete-after tag (a date, yyyy-mm-dd), a reminder that this is a throw-away proof of concept. Empty = no tag.')
+param deleteAfter string = ''
 
-@description('Receivers of the alert rules. Empty = no alert rules are created.')
+@description('Receivers of the alert rules, as a JSON array of e-mail addresses (one string per receiver). Empty = no alert rules are created.')
 param alertEmailAddresses array = []
 
-@description('TEST ONLY. Object id of the person who runs the test. Gets Key Vault Administrator on the three vaults and read access to the event queues. Defaults to whoever starts the deployment. Empty = nobody (set operatorPrincipalType to match when it is a service principal).')
-param operatorObjectId string = deployer().objectId
+@description('TEST ONLY. Object id of the person who runs the test. Gets Key Vault Administrator on the three vaults and read access to the event queues. Leave empty to use whoever starts the deployment. When a service principal or a pipeline deploys, set this and operatorPrincipalType explicitly.')
+param operatorObjectId string = ''
 
 @allowed([
   'User'
@@ -80,10 +82,19 @@ param renewSettings object = {
   RENEW_DAYS_BEFORE_EXPIRY: '30'
 }
 
+var nameSuffix = empty(suffix) ? substring(uniqueString(subscription().id), 0, 5) : suffix
+var hubRegion = empty(hubLocation) ? deployment().location : hubLocation
+var spokeARegion = empty(spokeALocation) ? hubRegion : spokeALocation
+var spokeBRegion = empty(spokeBLocation) ? hubRegion : spokeBLocation
+var spokeASub = empty(spokeASubscriptionId) ? subscription().subscriptionId : spokeASubscriptionId
+var spokeBSub = empty(spokeBSubscriptionId) ? subscription().subscriptionId : spokeBSubscriptionId
+var operatorId = empty(operatorObjectId) ? deployer().objectId : operatorObjectId
+
 var tags = union({
   purpose: 'kv-cert-sync-poc'
   'managed-by': 'arm'
   workload: 'kv-cert-sync'
+}, empty(deleteAfter) ? {} : {
   'delete-after': deleteAfter
 }, empty(ownerTag) ? {} : {
   owner: ownerTag
@@ -97,42 +108,42 @@ var rgNames = {
 
 // ------------------------------------------------------------------ resource groups (each in its own subscription)
 module rgHub '../modules/resource-group.bicep' = {
-  name: 'kvsync-rg-hub-${suffix}'
+  name: 'kvsync-rg-hub-${nameSuffix}'
   params: {
     name: rgNames.hub
-    location: hubLocation
+    location: hubRegion
     tags: tags
   }
 }
 
 module rgA '../modules/resource-group.bicep' = {
-  name: 'kvsync-rg-a-${suffix}'
-  scope: subscription(spokeASubscriptionId)
+  name: 'kvsync-rg-a-${nameSuffix}'
+  scope: subscription(spokeASub)
   params: {
     name: rgNames.spokeA
-    location: spokeALocation
+    location: spokeARegion
     tags: tags
   }
 }
 
 module rgB '../modules/resource-group.bicep' = {
-  name: 'kvsync-rg-b-${suffix}'
-  scope: subscription(spokeBSubscriptionId)
+  name: 'kvsync-rg-b-${nameSuffix}'
+  scope: subscription(spokeBSub)
   params: {
     name: rgNames.spokeB
-    location: spokeBLocation
+    location: spokeBRegion
     tags: tags
   }
 }
 
 // ------------------------------------------------------------------ custom roles (hub subscription)
 module roles '../modules/roles.bicep' = {
-  name: 'kvsync-roles-${suffix}'
+  name: 'kvsync-roles-${nameSuffix}'
   params: {
-    suffix: suffix
+    suffix: nameSuffix
     importerSubscriptionIds: [
-      spokeASubscriptionId
-      spokeBSubscriptionId
+      spokeASub
+      spokeBSub
     ]
   }
 }
@@ -140,11 +151,11 @@ module roles '../modules/roles.bicep' = {
 // ------------------------------------------------------------------ destination (consumer) vaults
 // In real life these already exist and belong to the application teams.
 module vaultA '../modules/vault.bicep' = {
-  name: 'kvsync-vault-a-${suffix}'
-  scope: resourceGroup(spokeASubscriptionId, rgNames.spokeA)
+  name: 'kvsync-vault-a-${nameSuffix}'
+  scope: resourceGroup(spokeASub, rgNames.spokeA)
   params: {
-    name: 'kv-dst-a-${suffix}'
-    location: spokeALocation
+    name: 'kv-dst-a-${nameSuffix}'
+    location: spokeARegion
     tags: tags
     purgeProtection: spokeAPurgeProtection
   }
@@ -154,11 +165,11 @@ module vaultA '../modules/vault.bicep' = {
 }
 
 module vaultB '../modules/vault.bicep' = {
-  name: 'kvsync-vault-b-${suffix}'
-  scope: resourceGroup(spokeBSubscriptionId, rgNames.spokeB)
+  name: 'kvsync-vault-b-${nameSuffix}'
+  scope: resourceGroup(spokeBSub, rgNames.spokeB)
   params: {
-    name: 'kv-dst-b-${suffix}'
-    location: spokeBLocation
+    name: 'kv-dst-b-${nameSuffix}'
+    location: spokeBRegion
     tags: tags
     purgeProtection: spokeBPurgeProtection
   }
@@ -169,11 +180,11 @@ module vaultB '../modules/vault.bicep' = {
 
 // ------------------------------------------------------------------ the factory
 module hub '../modules/hub.bicep' = {
-  name: 'kvsync-hub-${suffix}'
+  name: 'kvsync-hub-${nameSuffix}'
   scope: resourceGroup(rgNames.hub)
   params: {
-    suffix: suffix
-    location: hubLocation
+    suffix: nameSuffix
+    location: hubRegion
     tags: tags
     networkMode: 'public'
     destinations: [
@@ -187,7 +198,7 @@ module hub '../modules/hub.bicep' = {
       }
     ]
     sourcePurgeProtection: false // proof of concept only
-    operatorObjectId: operatorObjectId
+    operatorObjectId: operatorId
     operatorPrincipalType: operatorPrincipalType
     enableRenewApp: true
     caProvider: 'testca'
@@ -205,29 +216,29 @@ module hub '../modules/hub.bicep' = {
 
 // ------------------------------------------------------------------ access to the destination vaults
 module accessA '../modules/destination-access.bicep' = {
-  name: 'kvsync-access-a-${suffix}'
-  scope: resourceGroup(spokeASubscriptionId, rgNames.spokeA)
+  name: 'kvsync-access-a-${nameSuffix}'
+  scope: resourceGroup(spokeASub, rgNames.spokeA)
   params: {
     vaultName: vaultA.outputs.name
     syncPrincipalId: hub.outputs.syncPrincipalId
     syncIdentityId: hub.outputs.syncIdentityId
     importerRoleDefinitionId: roles.outputs.importerRoleDefinitionId
     workspaceId: hub.outputs.workspaceId
-    operatorObjectId: operatorObjectId
+    operatorObjectId: operatorId
     operatorPrincipalType: operatorPrincipalType
   }
 }
 
 module accessB '../modules/destination-access.bicep' = {
-  name: 'kvsync-access-b-${suffix}'
-  scope: resourceGroup(spokeBSubscriptionId, rgNames.spokeB)
+  name: 'kvsync-access-b-${nameSuffix}'
+  scope: resourceGroup(spokeBSub, rgNames.spokeB)
   params: {
     vaultName: vaultB.outputs.name
     syncPrincipalId: hub.outputs.syncPrincipalId
     syncIdentityId: hub.outputs.syncIdentityId
     importerRoleDefinitionId: roles.outputs.importerRoleDefinitionId
     workspaceId: hub.outputs.workspaceId
-    operatorObjectId: operatorObjectId
+    operatorObjectId: operatorId
     operatorPrincipalType: operatorPrincipalType
   }
 }
@@ -255,13 +266,13 @@ output destination_vaults object = {
     id: vaultA.outputs.id
     name: vaultA.outputs.name
     uri: vaultA.outputs.vaultUri
-    subscription: spokeASubscriptionId
+    subscription: spokeASub
   }
   b: {
     id: vaultB.outputs.id
     name: vaultB.outputs.name
     uri: vaultB.outputs.vaultUri
-    subscription: spokeBSubscriptionId
+    subscription: spokeBSub
   }
 }
 

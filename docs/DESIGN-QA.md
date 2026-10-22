@@ -22,7 +22,7 @@ Each answer is labelled by how well it is backed:
 | 8 | Would a real DigiCert certificate have been the same? | The vault, event, sync and consumer parts: yes. The CA part: no. See section 8 and [CERTIFICATE-AUTHORITIES.md](CERTIFICATE-AUTHORITIES.md). |
 | 9 | Is the design ready for 46/47-day certificates? | The renewal timing is. Domain validation is not solved and is the real work. See section 9. |
 | 10 | Does something like this already exist? | Parts of it. Nothing found does the whole job. See [PRIOR-ART.md](PRIOR-ART.md). |
-| 11 | Can this be a "Deploy to Azure" button? | Not for Terraform. See section 10 for what the repo offers instead. |
+| 11 | Can this be a "Deploy to Azure" button? | Not for Terraform, but yes for an ARM template, and the repo now has two (proof of concept and production). See section 10. |
 | 12 | Why not simply share one Key Vault entry across subscriptions? | You can, inside one tenant, for some consumers. The costs are identity fan-out, blast radius, regional coupling and uneven consumer support. See section 12. |
 | 13 | Which lifecycle events can a serverless function automate? | New version, near expiry, pending-CSR merge, periodic repair and alerting are built and were run. Domain validation, revocation and decommissioning are not. See section 13. |
 
@@ -211,16 +211,31 @@ The CA/Browser Forum ballot SC-081v3 lowers the maximum validity in steps. The B
 
 ## 10. Can this be a "Deploy to Azure" button?
 
-**Not for Terraform.** Microsoft: the button deploys "remote ARM JSON templates" and "doesn't support deploying remote Bicep files" ([Use a deployment button](https://learn.microsoft.com/azure/azure-resource-manager/templates/deploy-to-azure-button)). Terraform is not an ARM template, so there is no button that runs it.
+**Yes, for an ARM template, and the repository has two. No, for Terraform.** Microsoft: the button deploys "remote ARM JSON templates" and "doesn't support deploying remote Bicep files" ([Use a deployment button](https://learn.microsoft.com/azure/azure-resource-manager/templates/deploy-to-azure-button)). Terraform is not an ARM template, so no button runs it. The same two deployments therefore exist twice: as Terraform, and as Bicep that is compiled to ARM JSON.
 
-What the repository offers instead:
+| | Proof of concept | Production |
+|---|---|---|
+| Template | [deploy/poc/azuredeploy.json](../deploy/poc/azuredeploy.json), compiled from `main.bicep` | [deploy/production/azuredeploy.json](../deploy/production/azuredeploy.json), compiled from `main.bicep` |
+| Scope | Subscription: it creates three resource groups | Resource group: yours, it must exist |
+| Inputs | None are required | Destination vault ids, three subnets, the private DNS zones, at least one alert receiver |
+| Terraform twin | `terraform/poc` | `terraform/production` |
+| Tested | Deployed from its raw GitHub URL; every live test passed ([test report](TEST-REPORT.md#the-arm-template-proof-of-concept)) | Deployed once in a lab, with a private test CA ([test report](TEST-REPORT.md#the-arm-template-production-private-network)) |
+
+How it works, and what it does not do:
+
+1. **Compiled, not hand written.** The Bicep is the source. `azuredeploy.json` is what `bicep build` makes of it, with the compiler pinned to 0.46.1 because the JSON records the compiler version. CI recompiles both templates and fails when the committed JSON differs.
+2. **The function code ships with the repository.** The two apps are Flex Consumption apps, and the template deploys their code with the `onedeploy` extension: Azure fetches `released-package.zip` from `packageBaseUri` and builds it. The two zips are committed under `deploy/packages`, and `scripts/build_packages.py --check` (also in CI) proves that they are what `src/` builds to. The default URL points at the `main` branch, which moves: pin it to a tag or a commit, or host the two zips yourself.
+3. **The test CA cannot be created by the template.** ARM has no way to generate a key pair, so the proof of concept loads the test CA afterwards (`scripts/make_testca.py`). Terraform creates it.
+4. **No waits.** Terraform pauses 60 s for role assignments to replicate. ARM has no sleep, so the template orders each code deployment after the role assignments it needs. A policy exemption cannot be waited for either: create it a few minutes before the deployment ([OPERATIONS.md](OPERATIONS.md#removing-the-arm-proof-of-concept)).
+5. **A private function app does not stop the code deployment.** The extension is deployed by Azure Resource Manager, so with the production template, which turns public access off, no machine inside the network was needed. That was observed once, in the lab.
+6. **The production template needs `Microsoft.App` registered** in the subscription: the VNet integration of Flex Consumption apps uses it. The lab found that the hard way (12 minutes of retries, then a failure).
+
+For Terraform the repository offers instead:
 
 1. **Azure Cloud Shell.** It includes preconfigured authentication for Terraform ([Cloud Shell features](https://learn.microsoft.com/azure/cloud-shell/features)), so the steps are: open Cloud Shell, clone the repository, copy `terraform.tfvars.example` to `terraform.tfvars`, fill it in, run `terraform init` and `terraform apply`. This is the closest thing to one click. **Not run**: the lab used a workstation. (A public Cloud Shell cannot apply the private production variant, which needs line of sight to private endpoints.)
-2. **GitHub Actions.** `.github/workflows/deploy-poc.yml` is a manually triggered workflow (`workflow_dispatch`) that plans, applies or destroys the proof of concept using OIDC federation, so there is no stored secret, and keeps its state in a storage account. It is **written but never run**, because it needs your repository, an Entra application with a federated credential, a state account and your subscriptions. `.github/workflows/ci.yml` only checks formatting, validates the four Terraform roots and runs the offline tests.
-3. **Two variants.** `terraform/poc` is the public-endpoint proof of concept and creates its own resource groups, spoke vaults and optionally an Application Gateway. `terraform/production` assumes private networking that already exists and creates nothing public; it is **validated and planned only**.
+2. **GitHub Actions.** `.github/workflows/deploy-poc.yml` is a manually triggered workflow (`workflow_dispatch`) that plans, applies or destroys the proof of concept using OIDC federation, so there is no stored secret, and keeps its state in a storage account. It is **written but never run**, because it needs your repository, an Entra application with a federated credential, a state account and your subscriptions. `.github/workflows/ci.yml` checks formatting, validates the four Terraform roots, compiles the two ARM templates and runs the offline tests.
 
-A "Deploy to Azure" button for the production variant would not suit anyway: it needs existing subnets, DNS zones and decisions that a form cannot capture.
-
+A button for the production variant exists, but a form cannot make the decisions behind it: the subnets, the DNS zones and the destination vaults are your landing zone's, and the form only asks for their ids.
 ## 11. Prior art
 
 See [PRIOR-ART.md](PRIOR-ART.md). In short: parts exist (cross-region secret replication samples, a timer-only vault sync, ACME bots that issue into one vault). No public project found does CSR-mode public-CA renewal, merge, and copy to vaults in other subscriptions with the guard rails used here. The search could not cover GitHub code search, so that is not proof that none exists.

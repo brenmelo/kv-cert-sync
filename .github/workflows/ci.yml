@@ -46,3 +46,36 @@ jobs:
         run: pip install -r src/sync/requirements.txt -r src/renew/requirements.txt
       - name: test
         run: python -m unittest discover -s tests -p "test_*.py"
+
+  arm:
+    name: arm (Bicep, compiled templates, function packages)
+    runs-on: ubuntu-latest
+    env:
+      # Pinned because the compiled JSON records the compiler version and a template hash.
+      BICEP_VERSION: v0.46.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install the pinned Bicep CLI
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/bicep" "https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-x64"
+          chmod +x "$RUNNER_TEMP/bicep"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bicep" --version
+      - name: lint (any diagnostic fails the job)
+        run: |
+          status=0
+          for f in deploy/poc/main.bicep deploy/production/main.bicep deploy/production/examples/landing-zone.bicep; do
+            out=$(bicep lint "$f" 2>&1) || status=1
+            if [ -n "$out" ]; then echo "$out"; status=1; fi
+          done
+          exit $status
+      - name: the committed azuredeploy.json files are what the Bicep compiles to
+        run: |
+          bicep build deploy/poc/main.bicep --outfile deploy/poc/azuredeploy.json
+          bicep build deploy/production/main.bicep --outfile deploy/production/azuredeploy.json
+          git diff --exit-code -- deploy
+      - name: the committed function packages are what src/ builds to
+        run: python scripts/build_packages.py --check

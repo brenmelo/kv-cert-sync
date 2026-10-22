@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "16620119072500923182"
+      "templateHash": "13459752783176668140"
     }
   },
   "parameters": {
@@ -19,9 +19,9 @@
     },
     "location": {
       "type": "string",
-      "defaultValue": "[resourceGroup().location]",
+      "defaultValue": "",
       "metadata": {
-        "description": "Region of the factory. Choose a region with availability zones that supports Flex Consumption. The destination vaults can be anywhere."
+        "description": "Region of the factory. Choose a region with availability zones that supports Flex Consumption. Leave empty to use the region of the resource group. The destination vaults can be anywhere."
       }
     },
     "tags": {
@@ -185,9 +185,9 @@
     },
     "keyVaultDnsSuffix": {
       "type": "string",
-      "defaultValue": "[environment().suffixes.keyvaultDns]",
+      "defaultValue": "",
       "metadata": {
-        "description": "DNS suffix of Key Vault in this cloud, with the leading dot (.vault.azure.net in Azure public). It turns a vault name into its address."
+        "description": "DNS suffix of Key Vault in this cloud, with the leading dot (.vault.azure.net in Azure public, .vault.usgovcloudapi.net in Azure Government). It turns a vault name into its address. Leave empty to use the suffix of the cloud you deploy to."
       }
     },
     "packageBaseUri": {
@@ -216,10 +216,12 @@
           "subscriptionId": "[split(items(parameters('destinationVaultIds'))[copyIndex('destinationList')].value, '/')[2]]",
           "resourceGroup": "[split(items(parameters('destinationVaultIds'))[copyIndex('destinationList')].value, '/')[4]]",
           "name": "[split(items(parameters('destinationVaultIds'))[copyIndex('destinationList')].value, '/')[8]]",
-          "uri": "[format('https://{0}{1}', split(items(parameters('destinationVaultIds'))[copyIndex('destinationList')].value, '/')[8], parameters('keyVaultDnsSuffix'))]"
+          "uri": "[format('https://{0}{1}', split(items(parameters('destinationVaultIds'))[copyIndex('destinationList')].value, '/')[8], variables('vaultDnsSuffix'))]"
         }
       }
     ],
+    "factoryRegion": "[if(empty(parameters('location')), resourceGroup().location, parameters('location'))]",
+    "vaultDnsSuffix": "[if(empty(parameters('keyVaultDnsSuffix')), environment().suffixes.keyvaultDns, parameters('keyVaultDnsSuffix'))]",
     "privateDnsZoneIds": {
       "vault": "[parameters('vaultPrivateDnsZoneId')]",
       "blob": "[parameters('blobPrivateDnsZoneId')]",
@@ -372,7 +374,7 @@
             "value": "[parameters('suffix')]"
           },
           "location": {
-            "value": "[parameters('location')]"
+            "value": "[variables('factoryRegion')]"
           },
           "tags": {
             "value": "[parameters('tags')]"

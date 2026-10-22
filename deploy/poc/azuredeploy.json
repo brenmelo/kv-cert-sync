@@ -5,17 +5,16 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "2721007713786720114"
+      "templateHash": "10421883250230169785"
     }
   },
   "parameters": {
     "suffix": {
       "type": "string",
-      "defaultValue": "[substring(uniqueString(subscription().id), 0, 5)]",
-      "minLength": 3,
+      "defaultValue": "",
       "maxLength": 8,
       "metadata": {
-        "description": "Short lower-case token (3-8 letters or digits) that makes the global names unique. The default is stable per subscription, so a re-deployment updates the same resources."
+        "description": "Short lower-case token (3-8 letters or digits) that makes the global names unique. Leave empty to derive 5 characters from the subscription id: that is stable per subscription, so a re-deployment updates the same resources."
       }
     },
     "namePrefix": {
@@ -27,37 +26,37 @@
     },
     "hubLocation": {
       "type": "string",
-      "defaultValue": "[deployment().location]",
+      "defaultValue": "",
       "metadata": {
-        "description": "Region of the hub resources (function apps, source vault, storage). It must support Flex Consumption."
+        "description": "Region of the hub resources (function apps, source vault, storage). It must support Flex Consumption. Leave empty to use the region you selected for the deployment."
       }
     },
     "spokeASubscriptionId": {
       "type": "string",
-      "defaultValue": "[subscription().subscriptionId]",
+      "defaultValue": "",
       "metadata": {
-        "description": "Subscription of the first destination vault. May equal the hub subscription (the default). Any subscription of the same tenant works; you need Owner or User Access Administrator there."
+        "description": "Subscription id of the first destination vault. Leave empty to use the hub subscription. Any subscription of the same tenant works; you need Owner or User Access Administrator there."
       }
     },
     "spokeALocation": {
       "type": "string",
-      "defaultValue": "[parameters('hubLocation')]",
+      "defaultValue": "",
       "metadata": {
-        "description": "Region of the first destination vault."
+        "description": "Region of the first destination vault. Leave empty to use the hub region."
       }
     },
     "spokeBSubscriptionId": {
       "type": "string",
-      "defaultValue": "[subscription().subscriptionId]",
+      "defaultValue": "",
       "metadata": {
-        "description": "Subscription of the second destination vault. May equal the hub subscription (the default)."
+        "description": "Subscription id of the second destination vault. Leave empty to use the hub subscription."
       }
     },
     "spokeBLocation": {
       "type": "string",
-      "defaultValue": "[parameters('hubLocation')]",
+      "defaultValue": "",
       "metadata": {
-        "description": "Region of the second destination vault."
+        "description": "Region of the second destination vault. Leave empty to use the hub region."
       }
     },
     "spokeAPurgeProtection": {
@@ -83,23 +82,23 @@
     },
     "deleteAfter": {
       "type": "string",
-      "defaultValue": "[dateTimeAdd(utcNow(), 'P30D', 'yyyy-MM-dd')]",
+      "defaultValue": "",
       "metadata": {
-        "description": "Value of the delete-after tag (a date, yyyy-mm-dd). The deployment is a throw-away proof of concept."
+        "description": "Value of the delete-after tag (a date, yyyy-mm-dd), a reminder that this is a throw-away proof of concept. Empty = no tag."
       }
     },
     "alertEmailAddresses": {
       "type": "array",
       "defaultValue": [],
       "metadata": {
-        "description": "Receivers of the alert rules. Empty = no alert rules are created."
+        "description": "Receivers of the alert rules, as a JSON array of e-mail addresses (one string per receiver). Empty = no alert rules are created."
       }
     },
     "operatorObjectId": {
       "type": "string",
-      "defaultValue": "[deployer().objectId]",
+      "defaultValue": "",
       "metadata": {
-        "description": "TEST ONLY. Object id of the person who runs the test. Gets Key Vault Administrator on the three vaults and read access to the event queues. Defaults to whoever starts the deployment. Empty = nobody (set operatorPrincipalType to match when it is a service principal)."
+        "description": "TEST ONLY. Object id of the person who runs the test. Gets Key Vault Administrator on the three vaults and read access to the event queues. Leave empty to use whoever starts the deployment. When a service principal or a pipeline deploys, set this and operatorPrincipalType explicitly."
       }
     },
     "operatorPrincipalType": {
@@ -150,7 +149,14 @@
     }
   },
   "variables": {
-    "tags": "[union(createObject('purpose', 'kv-cert-sync-poc', 'managed-by', 'arm', 'workload', 'kv-cert-sync', 'delete-after', parameters('deleteAfter')), if(empty(parameters('ownerTag')), createObject(), createObject('owner', parameters('ownerTag'))))]",
+    "nameSuffix": "[if(empty(parameters('suffix')), substring(uniqueString(subscription().id), 0, 5), parameters('suffix'))]",
+    "hubRegion": "[if(empty(parameters('hubLocation')), deployment().location, parameters('hubLocation'))]",
+    "spokeARegion": "[if(empty(parameters('spokeALocation')), variables('hubRegion'), parameters('spokeALocation'))]",
+    "spokeBRegion": "[if(empty(parameters('spokeBLocation')), variables('hubRegion'), parameters('spokeBLocation'))]",
+    "spokeASub": "[if(empty(parameters('spokeASubscriptionId')), subscription().subscriptionId, parameters('spokeASubscriptionId'))]",
+    "spokeBSub": "[if(empty(parameters('spokeBSubscriptionId')), subscription().subscriptionId, parameters('spokeBSubscriptionId'))]",
+    "operatorId": "[if(empty(parameters('operatorObjectId')), deployer().objectId, parameters('operatorObjectId'))]",
+    "tags": "[union(createObject('purpose', 'kv-cert-sync-poc', 'managed-by', 'arm', 'workload', 'kv-cert-sync'), if(empty(parameters('deleteAfter')), createObject(), createObject('delete-after', parameters('deleteAfter'))), if(empty(parameters('ownerTag')), createObject(), createObject('owner', parameters('ownerTag'))))]",
     "rgNames": {
       "hub": "[format('rg-{0}-hub', parameters('namePrefix'))]",
       "spokeA": "[format('rg-{0}-spoke-a', parameters('namePrefix'))]",
@@ -161,7 +167,7 @@
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "[format('kvsync-rg-hub-{0}', parameters('suffix'))]",
+      "name": "[format('kvsync-rg-hub-{0}', variables('nameSuffix'))]",
       "location": "[deployment().location]",
       "properties": {
         "expressionEvaluationOptions": {
@@ -173,7 +179,7 @@
             "value": "[variables('rgNames').hub]"
           },
           "location": {
-            "value": "[parameters('hubLocation')]"
+            "value": "[variables('hubRegion')]"
           },
           "tags": {
             "value": "[variables('tags')]"
@@ -226,8 +232,8 @@
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "[format('kvsync-rg-a-{0}', parameters('suffix'))]",
-      "subscriptionId": "[parameters('spokeASubscriptionId')]",
+      "name": "[format('kvsync-rg-a-{0}', variables('nameSuffix'))]",
+      "subscriptionId": "[variables('spokeASub')]",
       "location": "[deployment().location]",
       "properties": {
         "expressionEvaluationOptions": {
@@ -239,7 +245,7 @@
             "value": "[variables('rgNames').spokeA]"
           },
           "location": {
-            "value": "[parameters('spokeALocation')]"
+            "value": "[variables('spokeARegion')]"
           },
           "tags": {
             "value": "[variables('tags')]"
@@ -292,8 +298,8 @@
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "[format('kvsync-rg-b-{0}', parameters('suffix'))]",
-      "subscriptionId": "[parameters('spokeBSubscriptionId')]",
+      "name": "[format('kvsync-rg-b-{0}', variables('nameSuffix'))]",
+      "subscriptionId": "[variables('spokeBSub')]",
       "location": "[deployment().location]",
       "properties": {
         "expressionEvaluationOptions": {
@@ -305,7 +311,7 @@
             "value": "[variables('rgNames').spokeB]"
           },
           "location": {
-            "value": "[parameters('spokeBLocation')]"
+            "value": "[variables('spokeBRegion')]"
           },
           "tags": {
             "value": "[variables('tags')]"
@@ -358,7 +364,7 @@
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "[format('kvsync-roles-{0}', parameters('suffix'))]",
+      "name": "[format('kvsync-roles-{0}', variables('nameSuffix'))]",
       "location": "[deployment().location]",
       "properties": {
         "expressionEvaluationOptions": {
@@ -367,12 +373,12 @@
         "mode": "Incremental",
         "parameters": {
           "suffix": {
-            "value": "[parameters('suffix')]"
+            "value": "[variables('nameSuffix')]"
           },
           "importerSubscriptionIds": {
             "value": [
-              "[parameters('spokeASubscriptionId')]",
-              "[parameters('spokeBSubscriptionId')]"
+              "[variables('spokeASub')]",
+              "[variables('spokeBSub')]"
             ]
           }
         },
@@ -483,8 +489,8 @@
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "[format('kvsync-vault-a-{0}', parameters('suffix'))]",
-      "subscriptionId": "[parameters('spokeASubscriptionId')]",
+      "name": "[format('kvsync-vault-a-{0}', variables('nameSuffix'))]",
+      "subscriptionId": "[variables('spokeASub')]",
       "resourceGroup": "[variables('rgNames').spokeA]",
       "properties": {
         "expressionEvaluationOptions": {
@@ -493,10 +499,10 @@
         "mode": "Incremental",
         "parameters": {
           "name": {
-            "value": "[format('kv-dst-a-{0}', parameters('suffix'))]"
+            "value": "[format('kv-dst-a-{0}', variables('nameSuffix'))]"
           },
           "location": {
-            "value": "[parameters('spokeALocation')]"
+            "value": "[variables('spokeARegion')]"
           },
           "tags": {
             "value": "[variables('tags')]"
@@ -580,14 +586,14 @@
         }
       },
       "dependsOn": [
-        "[subscriptionResourceId(parameters('spokeASubscriptionId'), 'Microsoft.Resources/deployments', format('kvsync-rg-a-{0}', parameters('suffix')))]"
+        "[subscriptionResourceId(variables('spokeASub'), 'Microsoft.Resources/deployments', format('kvsync-rg-a-{0}', variables('nameSuffix')))]"
       ]
     },
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "[format('kvsync-vault-b-{0}', parameters('suffix'))]",
-      "subscriptionId": "[parameters('spokeBSubscriptionId')]",
+      "name": "[format('kvsync-vault-b-{0}', variables('nameSuffix'))]",
+      "subscriptionId": "[variables('spokeBSub')]",
       "resourceGroup": "[variables('rgNames').spokeB]",
       "properties": {
         "expressionEvaluationOptions": {
@@ -596,10 +602,10 @@
         "mode": "Incremental",
         "parameters": {
           "name": {
-            "value": "[format('kv-dst-b-{0}', parameters('suffix'))]"
+            "value": "[format('kv-dst-b-{0}', variables('nameSuffix'))]"
           },
           "location": {
-            "value": "[parameters('spokeBLocation')]"
+            "value": "[variables('spokeBRegion')]"
           },
           "tags": {
             "value": "[variables('tags')]"
@@ -683,13 +689,13 @@
         }
       },
       "dependsOn": [
-        "[subscriptionResourceId(parameters('spokeBSubscriptionId'), 'Microsoft.Resources/deployments', format('kvsync-rg-b-{0}', parameters('suffix')))]"
+        "[subscriptionResourceId(variables('spokeBSub'), 'Microsoft.Resources/deployments', format('kvsync-rg-b-{0}', variables('nameSuffix')))]"
       ]
     },
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "[format('kvsync-hub-{0}', parameters('suffix'))]",
+      "name": "[format('kvsync-hub-{0}', variables('nameSuffix'))]",
       "resourceGroup": "[variables('rgNames').hub]",
       "properties": {
         "expressionEvaluationOptions": {
@@ -698,10 +704,10 @@
         "mode": "Incremental",
         "parameters": {
           "suffix": {
-            "value": "[parameters('suffix')]"
+            "value": "[variables('nameSuffix')]"
           },
           "location": {
-            "value": "[parameters('hubLocation')]"
+            "value": "[variables('hubRegion')]"
           },
           "tags": {
             "value": "[variables('tags')]"
@@ -713,11 +719,11 @@
             "value": [
               {
                 "key": "a",
-                "uri": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeASubscriptionId'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', parameters('suffix'))), '2025-04-01').outputs.vaultUri.value]"
+                "uri": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeASub'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', variables('nameSuffix'))), '2025-04-01').outputs.vaultUri.value]"
               },
               {
                 "key": "b",
-                "uri": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeBSubscriptionId'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', parameters('suffix'))), '2025-04-01').outputs.vaultUri.value]"
+                "uri": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeBSub'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', variables('nameSuffix'))), '2025-04-01').outputs.vaultUri.value]"
               }
             ]
           },
@@ -725,7 +731,7 @@
             "value": false
           },
           "operatorObjectId": {
-            "value": "[parameters('operatorObjectId')]"
+            "value": "[variables('operatorId')]"
           },
           "operatorPrincipalType": {
             "value": "[parameters('operatorPrincipalType')]"
@@ -752,7 +758,7 @@
             "value": "[parameters('alertEmailAddresses')]"
           },
           "issuerRoleDefinitionId": {
-            "value": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', parameters('suffix'))), '2025-04-01').outputs.issuerRoleDefinitionId.value]"
+            "value": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', variables('nameSuffix'))), '2025-04-01').outputs.issuerRoleDefinitionId.value]"
           }
         },
         "template": {
@@ -3889,17 +3895,17 @@
         }
       },
       "dependsOn": [
-        "[subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-rg-hub-{0}', parameters('suffix')))]",
-        "[subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', parameters('suffix')))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeASubscriptionId'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', parameters('suffix')))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeBSubscriptionId'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', parameters('suffix')))]"
+        "[subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-rg-hub-{0}', variables('nameSuffix')))]",
+        "[subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', variables('nameSuffix')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeASub'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', variables('nameSuffix')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeBSub'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', variables('nameSuffix')))]"
       ]
     },
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "[format('kvsync-access-a-{0}', parameters('suffix'))]",
-      "subscriptionId": "[parameters('spokeASubscriptionId')]",
+      "name": "[format('kvsync-access-a-{0}', variables('nameSuffix'))]",
+      "subscriptionId": "[variables('spokeASub')]",
       "resourceGroup": "[variables('rgNames').spokeA]",
       "properties": {
         "expressionEvaluationOptions": {
@@ -3908,22 +3914,22 @@
         "mode": "Incremental",
         "parameters": {
           "vaultName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeASubscriptionId'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', parameters('suffix'))), '2025-04-01').outputs.name.value]"
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeASub'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', variables('nameSuffix'))), '2025-04-01').outputs.name.value]"
           },
           "syncPrincipalId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.syncPrincipalId.value]"
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.syncPrincipalId.value]"
           },
           "syncIdentityId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.syncIdentityId.value]"
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.syncIdentityId.value]"
           },
           "importerRoleDefinitionId": {
-            "value": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', parameters('suffix'))), '2025-04-01').outputs.importerRoleDefinitionId.value]"
+            "value": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', variables('nameSuffix'))), '2025-04-01').outputs.importerRoleDefinitionId.value]"
           },
           "workspaceId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.workspaceId.value]"
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.workspaceId.value]"
           },
           "operatorObjectId": {
-            "value": "[parameters('operatorObjectId')]"
+            "value": "[variables('operatorId')]"
           },
           "operatorPrincipalType": {
             "value": "[parameters('operatorPrincipalType')]"
@@ -4070,16 +4076,16 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix')))]",
-        "[subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', parameters('suffix')))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeASubscriptionId'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', parameters('suffix')))]"
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix')))]",
+        "[subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', variables('nameSuffix')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeASub'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', variables('nameSuffix')))]"
       ]
     },
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "[format('kvsync-access-b-{0}', parameters('suffix'))]",
-      "subscriptionId": "[parameters('spokeBSubscriptionId')]",
+      "name": "[format('kvsync-access-b-{0}', variables('nameSuffix'))]",
+      "subscriptionId": "[variables('spokeBSub')]",
       "resourceGroup": "[variables('rgNames').spokeB]",
       "properties": {
         "expressionEvaluationOptions": {
@@ -4088,22 +4094,22 @@
         "mode": "Incremental",
         "parameters": {
           "vaultName": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeBSubscriptionId'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', parameters('suffix'))), '2025-04-01').outputs.name.value]"
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeBSub'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', variables('nameSuffix'))), '2025-04-01').outputs.name.value]"
           },
           "syncPrincipalId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.syncPrincipalId.value]"
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.syncPrincipalId.value]"
           },
           "syncIdentityId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.syncIdentityId.value]"
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.syncIdentityId.value]"
           },
           "importerRoleDefinitionId": {
-            "value": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', parameters('suffix'))), '2025-04-01').outputs.importerRoleDefinitionId.value]"
+            "value": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', variables('nameSuffix'))), '2025-04-01').outputs.importerRoleDefinitionId.value]"
           },
           "workspaceId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.workspaceId.value]"
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.workspaceId.value]"
           },
           "operatorObjectId": {
-            "value": "[parameters('operatorObjectId')]"
+            "value": "[variables('operatorId')]"
           },
           "operatorPrincipalType": {
             "value": "[parameters('operatorPrincipalType')]"
@@ -4250,9 +4256,9 @@
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix')))]",
-        "[subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', parameters('suffix')))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeBSubscriptionId'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', parameters('suffix')))]"
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix')))]",
+        "[subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', variables('nameSuffix')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeBSub'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', variables('nameSuffix')))]"
       ]
     }
   ],
@@ -4272,9 +4278,9 @@
     "source_vault": {
       "type": "object",
       "value": {
-        "id": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.sourceVault.value.id]",
-        "name": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.sourceVault.value.name]",
-        "uri": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.sourceVault.value.uri]",
+        "id": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.sourceVault.value.id]",
+        "name": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.sourceVault.value.name]",
+        "uri": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.sourceVault.value.uri]",
         "subscription": "[subscription().subscriptionId]"
       }
     },
@@ -4282,45 +4288,45 @@
       "type": "object",
       "value": {
         "a": {
-          "id": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeASubscriptionId'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', parameters('suffix'))), '2025-04-01').outputs.id.value]",
-          "name": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeASubscriptionId'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', parameters('suffix'))), '2025-04-01').outputs.name.value]",
-          "uri": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeASubscriptionId'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', parameters('suffix'))), '2025-04-01').outputs.vaultUri.value]",
-          "subscription": "[parameters('spokeASubscriptionId')]"
+          "id": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeASub'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', variables('nameSuffix'))), '2025-04-01').outputs.id.value]",
+          "name": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeASub'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', variables('nameSuffix'))), '2025-04-01').outputs.name.value]",
+          "uri": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeASub'), variables('rgNames').spokeA), 'Microsoft.Resources/deployments', format('kvsync-vault-a-{0}', variables('nameSuffix'))), '2025-04-01').outputs.vaultUri.value]",
+          "subscription": "[variables('spokeASub')]"
         },
         "b": {
-          "id": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeBSubscriptionId'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', parameters('suffix'))), '2025-04-01').outputs.id.value]",
-          "name": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeBSubscriptionId'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', parameters('suffix'))), '2025-04-01').outputs.name.value]",
-          "uri": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('spokeBSubscriptionId'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', parameters('suffix'))), '2025-04-01').outputs.vaultUri.value]",
-          "subscription": "[parameters('spokeBSubscriptionId')]"
+          "id": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeBSub'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', variables('nameSuffix'))), '2025-04-01').outputs.id.value]",
+          "name": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeBSub'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', variables('nameSuffix'))), '2025-04-01').outputs.name.value]",
+          "uri": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('spokeBSub'), variables('rgNames').spokeB), 'Microsoft.Resources/deployments', format('kvsync-vault-b-{0}', variables('nameSuffix'))), '2025-04-01').outputs.vaultUri.value]",
+          "subscription": "[variables('spokeBSub')]"
         }
       }
     },
     "function_apps": {
       "type": "object",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.functionApps.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.functionApps.value]"
     },
     "identities": {
       "type": "object",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.identities.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.identities.value]"
     },
     "queues": {
       "type": "object",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.queues.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.queues.value]"
     },
     "log_analytics_customer_id": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.logAnalyticsCustomerId.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.logAnalyticsCustomerId.value]"
     },
     "role_definitions": {
       "type": "object",
       "value": {
-        "importer": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', parameters('suffix'))), '2025-04-01').outputs.importerRoleDefinitionId.value]",
-        "issuer": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', parameters('suffix'))), '2025-04-01').outputs.issuerRoleDefinitionId.value]"
+        "importer": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', variables('nameSuffix'))), '2025-04-01').outputs.importerRoleDefinitionId.value]",
+        "issuer": "[reference(subscriptionResourceId('Microsoft.Resources/deployments', format('kvsync-roles-{0}', variables('nameSuffix'))), '2025-04-01').outputs.issuerRoleDefinitionId.value]"
       }
     },
     "event_grid_system_topic": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', parameters('suffix'))), '2025-04-01').outputs.eventGridSystemTopic.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('rgNames').hub), 'Microsoft.Resources/deployments', format('kvsync-hub-{0}', variables('nameSuffix'))), '2025-04-01').outputs.eventGridSystemTopic.value]"
     }
   }
 }

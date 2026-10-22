@@ -18,6 +18,7 @@ import json
 import re
 import sys
 import unittest
+import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -240,6 +241,230 @@ class Template(unittest.TestCase):
         found = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", text, flags=re.I))
         self.assertEqual(found - BUILT_IN_ROLES, set(), "only Azure built-in role ids may appear as literals")
         self.assertNotRegex(text, r"@[\w-]+\.(com|org|net)\b")  # no e-mail address
+
+
+PRODUCTION_TEMPLATE = ROOT / "deploy" / "production" / "azuredeploy.json"
+PRODUCTION_VARIABLES = ROOT / "terraform" / "production" / "variables.tf"
+
+# Terraform production input -> the ARM / Bicep parameter(s) that play the same role. The three inputs that name the deployment
+# target (subscription, tenant, resource group) are not parameters of a resource-group deployment: the scope is the target.
+TERRAFORM_TO_ARM = {
+    "location": ["location"],
+    "suffix": ["suffix"],
+    "tags": ["tags"],
+    "destination_vault_ids": ["destinationVaultIds"],
+    "private_endpoint_subnet_id": ["privateEndpointSubnetId"],
+    "function_subnet_ids": ["syncFunctionSubnetId", "renewFunctionSubnetId"],
+    "private_dns_zone_ids": ["vaultPrivateDnsZoneId", "blobPrivateDnsZoneId", "queuePrivateDnsZoneId", "tablePrivateDnsZoneId", "sitesPrivateDnsZoneId"],
+    "ca_provider": ["caProvider"],
+    "digicert_settings": ["renewSettings"],
+    "enable_renew_app": ["enableRenewApp"],
+    "destination_role_mode": ["destinationRoleMode"],
+    "sync_secret_name_prefix": ["syncSecretNamePrefix"],
+    "reconcile_schedule": ["reconcileSchedule"],
+    "renew_schedule": ["renewSchedule"],
+    "storage_replication_type": ["storageSkuName"],
+    "log_retention_days": ["logRetentionDays"],
+    "alert_email_addresses": ["alertEmailAddresses"],
+    "key_vault_dns_suffix": ["keyVaultDnsSuffix"],
+}
+IMPLICIT_IN_ARM = {"hub_subscription_id", "tenant_id", "resource_group_name"}
+
+
+def terraform_defaults():
+    """{variable: default literal} for every Terraform production variable that has a simple default."""
+    text = PRODUCTION_VARIABLES.read_text(encoding="utf-8")
+    result = {}
+    for name, body in re.findall(r'^variable "(\w+)" \{\n(.*?)^\}', text, flags=re.M | re.S):
+        found = re.search(r"^\s*default\s*=\s*(.+?)\s*$", body, flags=re.M)
+        result[name] = found.group(1).strip('"') if found else None
+    return result
+
+
+class ProductionTemplate(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.text = PRODUCTION_TEMPLATE.read_text(encoding="utf-8")
+        cls.template = json.loads(cls.text)
+        cls.resources = list(iter_resources(cls.template))
+        cls.hub = next(r for r in cls.template["resources"] if "kvsync-hub" in r["name"])
+        cls.parameters = cls.template["parameters"]
+
+    def of_type(self, resource_type):
+        return [r for r in self.resources if r.get("type") == resource_type]
+
+    def test_it_deploys_at_resource_group_scope(self):
+        self.assertTrue(self.template["$schema"].endswith("/deploymentTemplate.json#"), self.template["$schema"])
+
+    def test_the_hub_runs_in_private_mode_with_purge_protection_and_nobody_with_standing_access(self):
+        p = self.hub["properties"]["parameters"]
+        self.assertEqual(p["networkMode"]["value"], "private")
+        self.assertIs(p["sourcePurgeProtection"]["value"], True)
+        self.assertEqual(p["operatorObjectId"]["value"], "")  # the test operator of the proof of concept does not exist here
+
+    def test_exactly_the_things_that_must_be_chosen_have_no_default(self):
+        required = {name for name, p in self.parameters.items() if "defaultValue" not in p}
+        self.assertEqual(required, {
+            "suffix", "destinationVaultIds", "privateEndpointSubnetId", "syncFunctionSubnetId", "renewFunctionSubnetId", "alertEmailAddresses",
+        })
+
+    def test_every_parameter_is_documented_and_none_is_a_secret(self):
+        for name, p in self.parameters.items():
+            self.assertTrue(p.get("metadata", {}).get("description"), f"parameter {name} has no description")
+            self.assertNotIn(p["type"].lower(), ("securestring", "secureobject"), name)
+
+    def test_alert_receivers_are_mandatory_because_failures_must_reach_a_human(self):
+        self.assertEqual(self.parameters["alertEmailAddresses"]["minLength"], 1)
+
+    def test_safe_defaults(self):
+        self.assertEqual(self.parameters["caProvider"]["defaultValue"], "digicert")
+        self.assertEqual(self.parameters["storageSkuName"]["defaultValue"], "Standard_ZRS")
+        self.assertEqual(self.parameters["destinationRoleMode"]["defaultValue"], "custom")
+        self.assertIs(self.parameters["deployCode"]["defaultValue"], True)
+        self.assertIs(self.parameters["enableRenewApp"]["defaultValue"], True)
+
+    def test_every_terraform_production_input_has_an_arm_counterpart(self):
+        tf = set(terraform_defaults())
+        self.assertEqual(tf, set(TERRAFORM_TO_ARM) | IMPLICIT_IN_ARM, "a Terraform production input was added or removed: mirror it in deploy/production")
+        for name, arm_names in TERRAFORM_TO_ARM.items():
+            for arm_name in arm_names:
+                self.assertIn(arm_name, self.parameters, f"{name} -> {arm_name}")
+
+    def test_defaults_that_exist_on_both_sides_are_the_same(self):
+        tf = terraform_defaults()
+        same = {
+            "ca_provider": "caProvider",
+            "destination_role_mode": "destinationRoleMode",
+            "reconcile_schedule": "reconcileSchedule",
+            "renew_schedule": "renewSchedule",
+            "log_retention_days": "logRetentionDays",
+            "enable_renew_app": "enableRenewApp",
+            "sync_secret_name_prefix": "syncSecretNamePrefix",
+        }
+        for tf_name, arm_name in same.items():
+            arm_default = self.parameters[arm_name]["defaultValue"]
+            self.assertEqual(str(tf[tf_name]).lower(), str(arm_default).lower(), f"{tf_name} / {arm_name}")
+        self.assertEqual("Standard_" + tf["storage_replication_type"], self.parameters["storageSkuName"]["defaultValue"])
+
+    def test_it_creates_no_network_and_no_dns_only_private_endpoints(self):
+        allowed = {"Microsoft.Network/privateEndpoints", "Microsoft.Network/privateEndpoints/privateDnsZoneGroups"}
+        network = {r["type"] for r in self.resources if r.get("type", "").startswith("Microsoft.Network/")}
+        self.assertEqual(network - allowed, set(), "VNets, subnets and private DNS zones belong to the landing zone")
+
+    def test_private_endpoints_reach_the_vault_and_the_storage_and_the_function_apps(self):
+        groups = [
+            r["properties"]["parameters"]["groupId"]["value"]
+            for r in self.resources
+            if r.get("type") == "Microsoft.Resources/deployments" and "groupId" in r.get("properties", {}).get("parameters", {})
+        ]
+        self.assertEqual(sorted(groups), sorted(["vault"] + ["blob", "queue", "table", "sites"] * 2))  # the sync app skips the table at run time
+
+    def test_the_only_vault_it_declares_is_the_source_vault_no_destination_vault_is_created_or_changed(self):
+        vaults = self.of_type("Microsoft.KeyVault/vaults")
+        self.assertEqual(len(vaults), 1)
+        self.assertIs(vaults[0]["properties"]["enableRbacAuthorization"], True)
+        self.assertNotIn("accessPolicies", vaults[0]["properties"])
+
+    def test_storage_has_no_account_key_and_the_apps_have_no_publishing_password(self):
+        accounts = self.of_type("Microsoft.Storage/storageAccounts")
+        self.assertEqual(len(accounts), 2)
+        for a in accounts:
+            self.assertIs(a["properties"]["allowSharedKeyAccess"], False)
+            self.assertIs(a["properties"]["allowBlobPublicAccess"], False)
+        for p in self.of_type("Microsoft.Web/sites/basicPublishingCredentialsPolicies"):
+            self.assertIs(p["properties"]["allow"], False)
+
+    def test_code_deployment_is_optional_and_remote_built(self):
+        deploys = self.of_type("Microsoft.Web/sites/extensions")
+        self.assertEqual(len(deploys), 2)
+        for d in deploys:
+            self.assertIn("deployCode", d["condition"])
+            self.assertIs(d["properties"]["remoteBuild"], True)
+
+    def test_the_destination_vaults_are_found_through_their_resource_ids_in_any_subscription(self):
+        access = [r for r in self.template["resources"] if "kvsync-access" in r["name"]]
+        self.assertEqual(len(access), 1)
+        self.assertIn("copy", access[0])  # one deployment per destination vault
+        self.assertIn("subscriptionId", access[0])
+        self.assertIn("resourceGroup", access[0])
+
+    def test_the_custom_roles_are_created_at_subscription_scope_for_every_destination_subscription(self):
+        roles = next(r for r in self.template["resources"] if "kvsync-roles" in r["name"])
+        self.assertIn("subscriptionId", roles)
+        self.assertNotIn("resourceGroup", roles)
+        self.assertIn("destinationList", json.dumps(roles["properties"]["parameters"]["importerSubscriptionIds"]))
+
+    def test_outputs(self):
+        self.assertEqual(set(self.template["outputs"]), {
+            "sourceVault", "functionApps", "identities", "queues", "logAnalyticsCustomerId", "roleDefinitions", "destinationVaults", "nextSteps",
+        })
+        next_steps = json.dumps(self.template["outputs"]["nextSteps"])
+        for needle in ("ca-digicert-api-key", "kvsync=all", "kvrenew=on", "reconcile-complete"):
+            self.assertIn(needle, next_steps)
+
+    def test_default_package_location_is_public_and_generic(self):
+        base = self.parameters["packageBaseUri"]["defaultValue"]
+        self.assertTrue(base.startswith("https://raw.githubusercontent.com/"), base)
+        self.assertTrue(base.endswith("/deploy/packages"), base)
+
+    def test_no_tenant_subscription_or_person_is_baked_in(self):
+        found = set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", self.text, flags=re.I))
+        self.assertEqual(found - BUILT_IN_ROLES, set(), "only Azure built-in role ids may appear as literals")
+        self.assertNotRegex(self.text, r"@[\w-]+\.(com|org|net)\b")  # no e-mail address
+
+
+# ----------------------------------------------------------------------------------------------------------------- the buttons
+BUTTON_URL = re.compile(r"https://portal\.azure\.com/#create/Microsoft\.Template/uri/([^\s)\"'>]+)")
+BUTTON_IMAGE = "https://aka.ms/deploytoazurebutton"
+RAW_MAIN = "https://raw.githubusercontent.com/brenmelo/kv-cert-sync/main/"
+SKIP_DIRS = {".git", ".scratch", ".terraform", "node_modules"}
+
+
+def buttons_by_document():
+    """{markdown file: [(encoded url, decoded url), ...]} for every Deploy to Azure link in the repository."""
+    found = {}
+    for md in ROOT.rglob("*.md"):
+        rel = md.relative_to(ROOT)
+        if SKIP_DIRS & set(rel.parts):
+            continue
+        for encoded in BUTTON_URL.findall(md.read_text(encoding="utf-8")):
+            found.setdefault(rel.as_posix(), []).append((encoded, urllib.parse.unquote(encoded)))
+    return found
+
+
+class DeployButtons(unittest.TestCase):
+    """The Deploy to Azure buttons open the templates that are committed here, on main, and nothing else."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.buttons = buttons_by_document()
+        cls.readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    def test_the_readme_has_one_button_per_template(self):
+        decoded = sorted(url for _, url in self.buttons.get("README.md", []))
+        self.assertEqual(decoded, [RAW_MAIN + "deploy/poc/azuredeploy.json", RAW_MAIN + "deploy/production/azuredeploy.json"])
+
+    def test_every_button_opens_a_template_that_is_committed(self):
+        self.assertTrue(self.buttons, "no Deploy to Azure button found")
+        for doc, pairs in self.buttons.items():
+            for _, url in pairs:
+                self.assertTrue(url.startswith(RAW_MAIN), f"{doc}: {url} must be a raw file on the main branch")
+                path = ROOT / url[len(RAW_MAIN):]
+                self.assertEqual(path.name, "azuredeploy.json", f"{doc}: {url}")
+                self.assertTrue(path.is_file(), f"{doc}: {url} is not a file in this repository")
+
+    def test_the_whole_address_is_percent_encoded_the_way_the_portal_expects(self):
+        for doc, pairs in self.buttons.items():
+            for encoded, url in pairs:
+                self.assertEqual(encoded, urllib.parse.quote(url, safe=""), f"{doc}: encode the complete raw URL, slashes included")
+
+    def test_each_button_uses_the_official_image(self):
+        self.assertGreaterEqual(self.readme.count(f"![Deploy to Azure]({BUTTON_IMAGE})"), 2)
+
+    def test_the_readme_states_the_prerequisites_the_lab_run_into(self):
+        # the private variant failed after 12 minutes without this resource provider; keep it where people read first
+        self.assertIn("Microsoft.App", self.readme)
+        self.assertIn("make_testca.py", self.readme)
 
 
 # ----------------------------------------------------------------------------------------------------------------- test CA

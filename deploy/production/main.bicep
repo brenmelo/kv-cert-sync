@@ -15,6 +15,11 @@
 //   * Contributor on every destination vault when enableDestinationAudit is true (it adds a diagnostic setting),
 //   * permission to create custom roles at subscription scope (Owner or User Access Administrator).
 //
+// Before the first deployment, register the Microsoft.App resource provider in the subscription of the factory (the VNet
+// integration of Flex Consumption apps uses it). Without it the deployment retries the function apps for about 12 minutes and
+// then fails with "ServiceAssociationLink ... Please check if 'Microsoft.App' is registered":
+//   az provider register --namespace Microsoft.App --wait
+//
 // Deploy to Azure button and the command line: see README.md. Nothing here can put the CA API key in the vault, on purpose:
 // read the nextSteps output.
 targetScope = 'resourceGroup'
@@ -24,8 +29,8 @@ targetScope = 'resourceGroup'
 @description('Short lower-case token (3-8 letters or digits) that makes the global names unique (key vault, storage accounts, function apps).')
 param suffix string
 
-@description('Region of the factory. Choose a region with availability zones that supports Flex Consumption. The destination vaults can be anywhere.')
-param location string = resourceGroup().location
+@description('Region of the factory. Choose a region with availability zones that supports Flex Consumption. Leave empty to use the region of the resource group. The destination vaults can be anywhere.')
+param location string = ''
 
 @description('Tags for every resource the template creates.')
 param tags object = {}
@@ -107,14 +112,19 @@ param logRetentionDays int = 90
 @description('Write the data-plane audit log of every destination vault to the hub workspace (who read or wrote which certificate). It adds a diagnostic setting to each destination vault, which needs Contributor or Monitoring Contributor there; switch it off when you may only assign roles.')
 param enableDestinationAudit bool = true
 
-@description('DNS suffix of Key Vault in this cloud, with the leading dot (.vault.azure.net in Azure public). It turns a vault name into its address.')
-param keyVaultDnsSuffix string = environment().suffixes.keyvaultDns
+@description('DNS suffix of Key Vault in this cloud, with the leading dot (.vault.azure.net in Azure public, .vault.usgovcloudapi.net in Azure Government). It turns a vault name into its address. Leave empty to use the suffix of the cloud you deploy to.')
+param keyVaultDnsSuffix string = ''
 
 @description('Folder URL that holds sync/released-package.zip and renew/released-package.zip. Pin it to a release tag or a commit for a reproducible deployment, or host the two packages yourself.')
 param packageBaseUri string = 'https://raw.githubusercontent.com/brenmelo/kv-cert-sync/main/deploy/packages'
 
 @description('Deploy the code of both apps from packageBaseUri during this deployment. Set it to false to publish the code yourself afterwards (see docs/OPERATIONS.md), for example when the apps accept no connection from the Functions service.')
 param deployCode bool = true
+
+// Parameters with a computed value default to an empty string, and the template computes the value here. A literal default shows
+// correctly in the portal form and in every other client; a template expression would not.
+var factoryRegion = empty(location) ? resourceGroup().location : location
+var vaultDnsSuffix = empty(keyVaultDnsSuffix) ? environment().suffixes.keyvaultDns : keyVaultDnsSuffix
 
 // Destination vaults: { key, vaultId, subscriptionId, resourceGroup, name, uri } parsed from the resource ids.
 var destinationList = [for d in items(destinationVaultIds): {
@@ -123,7 +133,7 @@ var destinationList = [for d in items(destinationVaultIds): {
   subscriptionId: split(d.value, '/')[2]
   resourceGroup: split(d.value, '/')[4]
   name: split(d.value, '/')[8]
-  uri: 'https://${split(d.value, '/')[8]}${keyVaultDnsSuffix}'
+  uri: 'https://${split(d.value, '/')[8]}${vaultDnsSuffix}'
 }]
 
 var privateDnsZoneIds = {
@@ -151,7 +161,7 @@ module hub '../modules/hub.bicep' = {
   name: 'kvsync-hub-${suffix}'
   params: {
     suffix: suffix
-    location: location
+    location: factoryRegion
     tags: tags
     networkMode: 'private'
     destinations: map(destinationList, d => {
