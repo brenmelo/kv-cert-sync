@@ -19,6 +19,7 @@ import datetime as dt
 import json
 import logging
 import os
+import threading
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -253,8 +254,32 @@ def _select_targets(selector: str, dests: list) -> list:
 
 
 # ----------------------------------------------------------------------------- one certificate
+# Two events for the same certificate can arrive together (a new-version event and a near-expiry event were seen at the same
+# second in the end-to-end test) and the Functions host runs queue messages on several threads. Without a lock both threads read
+# a destination that does not hold the new version yet, and both import it: the destination ends with a duplicate, identical
+# version. The lock is per certificate name, so different certificates are still copied in parallel.
+#
+# It is per process. Two instances of the function app could still overlap; the harm is the same extra identical version, never
+# a failure or a wrong certificate, and the next event or sweep finds every destination converged.
+_CERT_LOCKS: dict = {}
+_CERT_LOCKS_GUARD = threading.Lock()
+
+
+def _cert_lock(name: str) -> threading.Lock:
+    with _CERT_LOCKS_GUARD:
+        return _CERT_LOCKS.setdefault(name, threading.Lock())
+
+
 def sync_certificate(name: str, ctx: Context, *, trigger: str, event_version: Optional[str] = None) -> list:
-    """Make every selected destination vault hold the latest version of source certificate `name`."""
+    """Make every selected destination vault hold the latest version of source certificate `name`.
+
+    One thread at a time works on a given certificate, so overlapping events cannot both import the same version.
+    """
+    with _cert_lock(name):
+        return _sync_certificate(name, ctx, trigger=trigger, event_version=event_version)
+
+
+def _sync_certificate(name: str, ctx: Context, *, trigger: str, event_version: Optional[str] = None) -> list:
     base = dict(cert=name, trigger=trigger, event_version=event_version)
     src = ctx.certs(ctx.source_uri)
 
