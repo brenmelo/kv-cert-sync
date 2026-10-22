@@ -1,0 +1,46 @@
+tenant_id           = "00000000-0000-0000-0000-000000000000"
+hub_subscription_id = "00000000-0000-0000-0000-000000000000"
+location            = "westeurope"
+resource_group_name = "rg-cert-factory-prod"
+suffix              = "prod01"
+
+tags = {
+  owner       = "platform-team@example.com"
+  costcenter  = "0000"
+  application = "certificate-factory"
+}
+
+# The EXISTING consumer vaults (any subscription of the tenant). The sync identity gets only "read + import certificates" on each.
+destination_vault_ids = {
+  app_eu = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app-eu/providers/Microsoft.KeyVault/vaults/kv-app-eu"
+  app_us = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-app-us/providers/Microsoft.KeyVault/vaults/kv-app-us"
+}
+
+# Network that already exists in your landing zone
+private_endpoint_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub/subnets/snet-private-endpoints"
+
+function_subnet_ids = {
+  sync  = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub/subnets/snet-func-sync"
+  renew = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub/subnets/snet-func-renew"
+}
+
+# Leave a zone out when your landing-zone policy registers the private DNS records for you
+private_dns_zone_ids = {
+  vault = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.vaultcore.azure.net"
+  blob  = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+  queue = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.queue.core.windows.net"
+  table = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.table.core.windows.net"
+  sites = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.azurewebsites.net"
+}
+
+# DigiCert CertCentral (non-secret settings). The API key itself goes into the vault, see `terraform output next_steps`.
+# DIGICERT_PRODUCT is a placeholder: use a product name_id that your own account returns from the CertCentral product list.
+digicert_settings = {
+  DIGICERT_PRODUCT         = "ssl_wildcard"
+  DIGICERT_ORGANIZATION_ID = "123456"
+  DIGICERT_ORDER_YEARS     = "1"
+  DIGICERT_DCV_METHOD      = "dns-txt-token"
+  # DIGICERT_CERT_VALIDITY_DAYS = "199"  # only honoured on multi-year-plan accounts; otherwise DigiCert decides how long a certificate lives
+}
+
+alert_email_addresses = ["certificate-owners@example.com"]

@@ -1,0 +1,22 @@
+hub_subscription_id     = "00000000-0000-0000-0000-000000000000" # subscription of the source vault and the function apps
+spoke_a_subscription_id = "00000000-0000-0000-0000-000000000000" # first destination vault
+spoke_b_subscription_id = "00000000-0000-0000-0000-000000000000" # second destination vault (may be the same)
+tenant_id               = null                                   # null = tenant of the signed-in Azure CLI account
+
+suffix       = "a1b2c" # 3-8 lower-case letters/digits, makes global names unique
+owner_tag    = "your-alias"
+delete_after = "2026-12-31"
+
+operator_object_id = "00000000-0000-0000-0000-000000000000" # az ad signed-in-user show --query id -o tsv
+
+# Only if your policy forces public network access off and you accept a time-boxed waiver for a throw-away test.
+# Find the assignment id in the policy compliance blade or in the error message of a denied deployment.
+policy_exemptions = [
+  # {
+  #   name                 = "kvsync-poc-waive-pna"
+  #   target               = "hub" # hub | spoke_a | spoke_b: the resource group that receives the waiver
+  #   policy_assignment_id = "/providers/Microsoft.Management/managementGroups/<mg>/providers/Microsoft.Authorization/policyAssignments/<name>"
+  #   reference_ids        = ["KeyVaultPublicNetworkModify"] # empty list = the whole assignment
+  #   expires_on           = "2026-12-31T00:00:00Z"
+  # },
+]

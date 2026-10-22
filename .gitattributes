@@ -1,0 +1,5 @@
+# Keep line endings stable so `terraform fmt -check` and the tests behave the same on every platform.
+* text=auto eol=lf
+*.png binary
+*.mp4 binary
+*.zip binary

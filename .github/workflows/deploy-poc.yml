@@ -1,0 +1,99 @@
+# UNTESTED TEMPLATE. This workflow has never run. It is a starting point for deploying the public proof of concept from GitHub
+# Actions instead of a workstation. Read it before you use it, and pin the actions to commit SHAs if you keep it.
+#
+# What you must set up first (repository settings):
+#   * An Entra app registration with a federated credential for this repository and the "poc" environment
+#     (https://learn.microsoft.com/azure/developer/github/connect-from-azure-openid-connect). It needs Owner on the three
+#     subscriptions of a SANDBOX, because the stack creates role assignments and policy exemptions.
+#   * An Azure Storage account and container for the Terraform state. Do NOT apply with local state: a runner is thrown away
+#     and the state with it, and then nothing can destroy what was built. The identity needs "Storage Blob Data Contributor" on it.
+#   * Repository variables: AZURE_CLIENT_ID, AZURE_TENANT_ID, HUB_SUBSCRIPTION_ID, SPOKE_A_SUBSCRIPTION_ID,
+#     SPOKE_B_SUBSCRIPTION_ID, SUFFIX, OWNER_TAG, DELETE_AFTER, OPERATOR_OBJECT_ID, TFSTATE_RESOURCE_GROUP,
+#     TFSTATE_STORAGE_ACCOUNT. No secret is needed: authentication is OIDC.
+#   * An environment named "poc" with a required reviewer, so that "apply" and "destroy" wait for a person.
+#
+# The proof of concept uses PUBLIC endpoints, so a GitHub-hosted runner can reach it. The private-network stack
+# (terraform/production) cannot be applied from a GitHub-hosted runner; use a self-hosted runner inside the network.
+
+name: deploy-poc
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options: [plan, apply, destroy]
+        default: plan
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.HUB_SUBSCRIPTION_ID }}
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    environment: poc
+    defaults:
+      run:
+        working-directory: terraform/poc
+    steps:
+      - uses: actions/checkout@v4
+
+      # The module deploys the function code with the Azure CLI, so the CLI has to be signed in too.
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.HUB_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Remote state (override file, not committed)
+        run: |
+          cat > backend_override.tf <<'EOF'
+          terraform {
+            backend "azurerm" {}
+          }
+          EOF
+
+      - name: Variables
+        run: |
+          cat > terraform.tfvars <<EOF
+          hub_subscription_id     = "${{ vars.HUB_SUBSCRIPTION_ID }}"
+          spoke_a_subscription_id = "${{ vars.SPOKE_A_SUBSCRIPTION_ID }}"
+          spoke_b_subscription_id = "${{ vars.SPOKE_B_SUBSCRIPTION_ID }}"
+          suffix                  = "${{ vars.SUFFIX }}"
+          owner_tag               = "${{ vars.OWNER_TAG }}"
+          delete_after            = "${{ vars.DELETE_AFTER }}"
+          operator_object_id      = "${{ vars.OPERATOR_OBJECT_ID }}"
+          EOF
+
+      - name: init
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=kv-cert-sync-poc.tfstate" \
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: plan
+        if: inputs.action == 'plan'
+        run: terraform plan -input=false -lock-timeout=5m
+
+      - name: apply
+        if: inputs.action == 'apply'
+        run: terraform apply -input=false -auto-approve -lock-timeout=5m
+
+      - name: destroy
+        if: inputs.action == 'destroy'
+        run: terraform destroy -input=false -auto-approve -lock-timeout=5m

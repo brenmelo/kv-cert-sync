@@ -1,0 +1,36 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+terraform.tfvars
+*.auto.tfvars
+override.tf
+override.tf.json
+*.tfplan
+tfplan
+.build/
+# the provider lock file is committed for the deployable roots only, not for the shared module
+terraform/modules/**/.terraform.lock.hcl
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+local.settings.json
+
+# Local evidence / scratch
+*.log
+.scratch/
+
+# Anything that could carry a secret or an environment-specific value
+outputs.json
+evidence*.json
+inventory*.csv
+inventory*.json
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.csr

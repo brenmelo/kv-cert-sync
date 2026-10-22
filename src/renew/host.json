@@ -1,0 +1,29 @@
+{
+  "version": "2.0",
+  "logging": {
+    "logLevel": {
+      "default": "Information",
+      "Host.Aggregator": "Warning",
+      "Azure": "Warning",
+      "Microsoft.Identity": "Warning",
+      "Microsoft.AspNetCore": "Warning"
+    },
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": false
+      }
+    }
+  },
+  "extensions": {
+    "queues": {
+      "messageEncoding": "base64",
+      "visibilityTimeout": "00:02:00",
+      "batchSize": 4,
+      "maxDequeueCount": 5
+    }
+  },
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.*, 5.0.0)"
+  }
+}
