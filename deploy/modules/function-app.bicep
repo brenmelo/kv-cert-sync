@@ -59,6 +59,9 @@ param includedEventTypes array
 @description('URL of the code package (a zip named released-package.zip). The Functions service downloads it.')
 param packageUri string
 
+@description('Deploy the code package from packageUri with the OneDeploy extension. Set it to false when the Functions service cannot deploy to the app (for example a private-only app) and publish the code yourself afterwards.')
+param deployCode bool = true
+
 param maxInstanceCount int = 40
 
 @allowed([
@@ -337,7 +340,7 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
 
 // Code: the Functions service downloads the package and runs a remote build (pip install -r requirements.txt).
 // The package must be named released-package.zip. Flex Consumption does not use WEBSITE_RUN_FROM_PACKAGE.
-resource oneDeploy 'Microsoft.Web/sites/extensions@2022-09-01' = {
+resource oneDeploy 'Microsoft.Web/sites/extensions@2022-09-01' = if (deployCode) {
   parent: site
   name: 'onedeploy'
   #disable-next-line BCP187
@@ -426,6 +429,7 @@ resource eventSubscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@
     queueSender
     eventQueue
     oneDeploy
+    peQueue // private mode: the delivery path exists first, and the role assignment above gets a little more time to replicate
   ]
 }
 

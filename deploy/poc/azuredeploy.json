@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "13082689941242323111"
+      "templateHash": "2721007713786720114"
     }
   },
   "parameters": {
@@ -762,7 +762,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "10288153437942694288"
+              "templateHash": "12308903966057182371"
             }
           },
           "parameters": {
@@ -886,6 +886,13 @@
               "minLength": 1,
               "metadata": {
                 "description": "Folder URL that holds sync/released-package.zip and renew/released-package.zip. The Functions service downloads them."
+              }
+            },
+            "deployCode": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Deploy the code of both apps from packageBaseUri. Set it to false to publish the code yourself (for example when the apps are private-only and the Functions service cannot reach them)."
               }
             },
             "maxInstanceCount": {
@@ -1472,6 +1479,9 @@
                   "packageUri": {
                     "value": "[format('{0}/sync/released-package.zip', variables('baseUri'))]"
                   },
+                  "deployCode": {
+                    "value": "[parameters('deployCode')]"
+                  },
                   "maxInstanceCount": {
                     "value": "[parameters('maxInstanceCount')]"
                   },
@@ -1504,7 +1514,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.46.1.21595",
-                      "templateHash": "14272643325050297404"
+                      "templateHash": "5756792392090498695"
                     }
                   },
                   "parameters": {
@@ -1599,6 +1609,13 @@
                       "type": "string",
                       "metadata": {
                         "description": "URL of the code package (a zip named released-package.zip). The Functions service downloads it."
+                      }
+                    },
+                    "deployCode": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Deploy the code package from packageUri with the OneDeploy extension. Set it to false when the Functions service cannot deploy to the app (for example a private-only app) and publish the code yourself afterwards."
                       }
                     },
                     "maxInstanceCount": {
@@ -1908,6 +1925,7 @@
                       ]
                     },
                     {
+                      "condition": "[parameters('deployCode')]",
                       "type": "Microsoft.Web/sites/extensions",
                       "apiVersion": "2022-09-01",
                       "name": "[format('{0}/{1}', variables('siteName'), 'onedeploy')]",
@@ -1988,6 +2006,7 @@
                       "dependsOn": [
                         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', parameters('queueName'))]",
                         "[resourceId('Microsoft.Web/sites/extensions', variables('siteName'), 'onedeploy')]",
+                        "[resourceId('Microsoft.Resources/deployments', format('pe-queue-{0}-{1}', parameters('label'), parameters('suffix')))]",
                         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.EventGrid/systemTopics', parameters('eventTopicName')), variables('roleIds').queueSender))]",
                         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
                       ]
@@ -2671,6 +2690,9 @@
                   "packageUri": {
                     "value": "[format('{0}/renew/released-package.zip', variables('baseUri'))]"
                   },
+                  "deployCode": {
+                    "value": "[parameters('deployCode')]"
+                  },
                   "maxInstanceCount": {
                     "value": "[parameters('maxInstanceCount')]"
                   },
@@ -2703,7 +2725,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.46.1.21595",
-                      "templateHash": "14272643325050297404"
+                      "templateHash": "5756792392090498695"
                     }
                   },
                   "parameters": {
@@ -2798,6 +2820,13 @@
                       "type": "string",
                       "metadata": {
                         "description": "URL of the code package (a zip named released-package.zip). The Functions service downloads it."
+                      }
+                    },
+                    "deployCode": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Deploy the code package from packageUri with the OneDeploy extension. Set it to false when the Functions service cannot deploy to the app (for example a private-only app) and publish the code yourself afterwards."
                       }
                     },
                     "maxInstanceCount": {
@@ -3107,6 +3136,7 @@
                       ]
                     },
                     {
+                      "condition": "[parameters('deployCode')]",
                       "type": "Microsoft.Web/sites/extensions",
                       "apiVersion": "2022-09-01",
                       "name": "[format('{0}/{1}', variables('siteName'), 'onedeploy')]",
@@ -3187,6 +3217,7 @@
                       "dependsOn": [
                         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', parameters('queueName'))]",
                         "[resourceId('Microsoft.Web/sites/extensions', variables('siteName'), 'onedeploy')]",
+                        "[resourceId('Microsoft.Resources/deployments', format('pe-queue-{0}-{1}', parameters('label'), parameters('suffix')))]",
                         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.EventGrid/systemTopics', parameters('eventTopicName')), variables('roleIds').queueSender))]",
                         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
                       ]
@@ -3905,7 +3936,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "17900685387057398938"
+              "templateHash": "17698182403409390931"
             }
           },
           "parameters": {
@@ -3964,6 +3995,20 @@
               "metadata": {
                 "description": "Principal type of operatorObjectId: User, Group or ServicePrincipal."
               }
+            },
+            "enableAudit": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Write the data-plane audit log of this vault to the hub workspace. It needs permission to create a diagnostic setting on the vault (Monitoring Contributor or Contributor); switch it off when you only have permission to assign roles."
+              }
+            },
+            "auditSettingName": {
+              "type": "string",
+              "defaultValue": "audit-to-log-analytics",
+              "metadata": {
+                "description": "Name of the diagnostic setting. Use a name that is unique per factory when several factories write to the same vault (a vault has room for 5 settings, and a setting with an existing name is overwritten)."
+              }
             }
           },
           "variables": {
@@ -3996,10 +4041,11 @@
               }
             },
             {
+              "condition": "[parameters('enableAudit')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
               "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('vaultName'))]",
-              "name": "audit-to-log-analytics",
+              "name": "[parameters('auditSettingName')]",
               "properties": {
                 "workspaceId": "[parameters('workspaceId')]",
                 "logs": [
@@ -4070,7 +4116,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "17900685387057398938"
+              "templateHash": "17698182403409390931"
             }
           },
           "parameters": {
@@ -4129,6 +4175,20 @@
               "metadata": {
                 "description": "Principal type of operatorObjectId: User, Group or ServicePrincipal."
               }
+            },
+            "enableAudit": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Write the data-plane audit log of this vault to the hub workspace. It needs permission to create a diagnostic setting on the vault (Monitoring Contributor or Contributor); switch it off when you only have permission to assign roles."
+              }
+            },
+            "auditSettingName": {
+              "type": "string",
+              "defaultValue": "audit-to-log-analytics",
+              "metadata": {
+                "description": "Name of the diagnostic setting. Use a name that is unique per factory when several factories write to the same vault (a vault has room for 5 settings, and a setting with an existing name is overwritten)."
+              }
             }
           },
           "variables": {
@@ -4161,10 +4221,11 @@
               }
             },
             {
+              "condition": "[parameters('enableAudit')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
               "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('vaultName'))]",
-              "name": "audit-to-log-analytics",
+              "name": "[parameters('auditSettingName')]",
               "properties": {
                 "workspaceId": "[parameters('workspaceId')]",
                 "logs": [

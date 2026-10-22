@@ -36,6 +36,12 @@ param operatorObjectId string = ''
 @description('Principal type of operatorObjectId: User, Group or ServicePrincipal.')
 param operatorPrincipalType string = 'User'
 
+@description('Write the data-plane audit log of this vault to the hub workspace. It needs permission to create a diagnostic setting on the vault (Monitoring Contributor or Contributor); switch it off when you only have permission to assign roles.')
+param enableAudit bool = true
+
+@description('Name of the diagnostic setting. Use a name that is unique per factory when several factories write to the same vault (a vault has room for 5 settings, and a setting with an existing name is overwritten).')
+param auditSettingName string = 'audit-to-log-analytics'
+
 var certOfficerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a4417e6f-fecd-4de8-b567-7b0420556985') // Key Vault Certificates Officer
 var adminRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '00482a5a-887f-4fb3-b363-3b7fe8e74483') // Key Vault Administrator
 var syncRoleDefinitionId = destinationRoleMode == 'custom' ? importerRoleDefinitionId : certOfficerRoleId
@@ -64,8 +70,8 @@ resource operatorAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
   }
 }
 
-resource audit 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'audit-to-log-analytics'
+resource audit 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableAudit) {
+  name: auditSettingName
   scope: vault
   properties: {
     workspaceId: workspaceId

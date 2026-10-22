@@ -69,6 +69,9 @@ param renewSchedule string = '0 */15 * * * *'
 @description('Folder URL that holds sync/released-package.zip and renew/released-package.zip. The Functions service downloads them.')
 param packageBaseUri string
 
+@description('Deploy the code of both apps from packageBaseUri. Set it to false to publish the code yourself (for example when the apps are private-only and the Functions service cannot reach them).')
+param deployCode bool = true
+
 param maxInstanceCount int = 40
 param logRetentionDays int = 30
 
@@ -285,6 +288,7 @@ module syncApp 'function-app.bicep' = {
       'Microsoft.KeyVault.CertificateNearExpiry'
     ]
     packageUri: '${baseUri}/sync/released-package.zip'
+    deployCode: deployCode
     maxInstanceCount: maxInstanceCount
     storageSkuName: storageSkuName
     networkMode: networkMode
@@ -316,6 +320,7 @@ module renewApp 'function-app.bicep' = if (enableRenewApp) {
       'Microsoft.KeyVault.CertificateNearExpiry'
     ]
     packageUri: '${baseUri}/renew/released-package.zip'
+    deployCode: deployCode
     maxInstanceCount: maxInstanceCount
     storageSkuName: storageSkuName
     networkMode: networkMode
