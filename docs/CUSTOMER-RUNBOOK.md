@@ -6,13 +6,14 @@ Every statement carries one of these labels, so that you know how far to trust i
 
 | Label | Meaning |
 |---|---|
-| **Tested** | It ran in the lab proof of concept. The evidence is in the test report |
-| **Planned only** | A `terraform plan` of the production stack. It was **never applied** |
+| **Tested** | It ran in the lab proof of concept, as Terraform or as the ARM template. The evidence is in the test report |
+| **Tested once** | The ARM template for the private network ran **once** in the lab, on a sample landing zone (section 5.8) |
+| **Planned only** | A `terraform plan` of the Terraform production stack. It was **never applied** |
 | **Not tested** | Written, but never run, or no result exists |
 | **Microsoft docs** | Documented behaviour, with a link. Not exercised here |
 | **Judgment** | A recommendation. Reasonable people can differ |
 
-**The one thing to know before you start:** the lab used a private test CA, public endpoints, and three vaults. The production variant (private endpoints) and the DigiCert client have **never run**. Plan a rehearsal (section 5.0) before you touch a production vault.
+**The one thing to know before you start:** the lab used a private test CA and three vaults. The DigiCert client has **never run**. The private-network variant was deployed **once**, as an ARM template on a sample landing zone (section 5.8); its Terraform twin was only planned. Plan a rehearsal (section 5.0) before you touch a production vault.
 
 | Phase | What | Section |
 |---|---|---|
@@ -49,12 +50,13 @@ It does **not**:
 | 2 | **Region of the factory** | A region with availability zones **and** managed cross-region failover for Key Vault. West US 3 and the two Brazil regions have none. Copies keep serving if the factory is down, but renewal pauses | Microsoft docs |
 | 3 | **Which certificates first** | Three to five that are exportable, have one owner who can answer, and are read through a versionless URI. Start with the ones ordered once per vault today (section 3, the duplicates report): that is where the saving is | Judgment |
 | 4 | **Which CA path** | See the table below | See below |
-| 5 | **Network mode** | `terraform/poc` is public endpoints with RBAC, for a rehearsal. `terraform/production` is private endpoints, VNet-integrated apps and no public data plane | Production is **Planned only** |
+| 5 | **Network mode** | `terraform/poc` is public endpoints with RBAC, for a rehearsal. `terraform/production` is private endpoints, VNet-integrated apps and no public data plane | Production: Terraform **Planned only**, ARM **Tested once** (section 5.8) |
 | 6 | **Role mode** | `destination_role_mode = custom` creates a role that can only read and import certificates, and needs role-definition rights in every destination subscription. `builtin` uses *Key Vault Certificates Officer*, which can also delete, purge, back up and restore | Custom **Tested** (14 of 14 access expectations); built-in **Not tested** |
 | 7 | **Who may opt a certificate in** | Writing the `kvsync` tag on a factory certificate sends its private key to the named vaults. Restrict `certificates/update` on the factory vault to the factory team. Prefer **named destination keys** (`kvsync=app_eu,app_us`) over `kvsync=all` for production, so that a certificate reaches only the vaults that need it | Judgment ([DESIGN-QA.md](DESIGN-QA.md), section 6) |
 | 8 | **Alert receivers** | A mailbox that your ticketing or paging tool ingests. The module supports **e-mail receivers only**. Verify the address (one-time code), and allow-list the Azure sender addresses ([OPERATIONS.md](OPERATIONS.md#e-mail-receivers)) | **Tested**: the lab's address was never verified, and most of the notifications were later found in Deleted Items |
 | 9 | **Ownership** | One team owns the factory, its alerts and the CA credential. Each destination vault keeps its owner, who agrees to what is written into it | Judgment |
-| 10 | **Names** | `suffix` (3 to 8 lower-case letters or digits) and **destination keys** (short, lower-case, stable). A key is what a `kvsync` tag refers to, and it is the Terraform address of the vault's role assignment, so renaming a key replaces them. Treat keys as permanent | Read from the code |
+| 10 | **Names** | `suffix` (3 to 8 lower-case letters or digits) and **destination keys** (short, lower-case, stable). A key is what a `kvsync` tag refers to, and in Terraform it is the address of the vault's role assignment, so renaming a key replaces them (in the ARM template a key is only a label, section 5.8). Treat keys as permanent | Read from the code |
+| 11 | **Deployment route** | Terraform (sections 5.1 to 5.7) or the ARM template (section 5.8). Both build the same factory from the same inputs, so pick the one your pipelines already run. The ARM route keeps no state file, and Azure itself pulls the function code, so no machine inside the network is needed for the code. Only Terraform has the Application Gateway test consumer | Terraform production **Planned only**. ARM production **Tested once** (test CA, public destination vaults, code deployed from outside the network) |
 
 **Decision 4, the CA path**
 
@@ -90,7 +92,7 @@ No Microsoft Entra roles and no app registrations are needed: the stack creates 
 
 ### 2.3 Where the apply host runs (production only)
 
-With private endpoints and public network access off, **the function apps' deployment endpoint is not reachable from the internet**. Microsoft: "the computer, runner, or agent that performs the deployment must have network connectivity to and DNS resolution for the private deployment endpoint" ([Deploy a package](https://learn.microsoft.com/azure/azure-functions/deployment-zip-push#deploy-a-package)). So run `terraform apply` from a self-hosted pipeline agent or a jump host inside, or connected to, the network that holds the private endpoints. **A public Cloud Shell or a GitHub-hosted runner cannot do it.** The same host is needed to store the CA credential (section 5.7). Whether the remote build succeeds through the private path was **not tested** (production was never applied). Label: Microsoft docs.
+With private endpoints and public network access off, **the function apps' deployment endpoint is not reachable from the internet**. Microsoft: "the computer, runner, or agent that performs the deployment must have network connectivity to and DNS resolution for the private deployment endpoint" ([Deploy a package](https://learn.microsoft.com/azure/azure-functions/deployment-zip-push#deploy-a-package)). So run `terraform apply` from a self-hosted pipeline agent or a jump host inside, or connected to, the network that holds the private endpoints. **A public Cloud Shell or a GitHub-hosted runner cannot do it.** The same host is needed to store the CA credential (section 5.7). Whether the remote build succeeds through the private path was **not tested** (the Terraform production stack was never applied). Label: Microsoft docs. **With the ARM template** (section 5.8) Azure itself pulls the code, so the host is needed only for the CA credential: in the lab the code of a private-mode stack was deployed from a machine outside its network, and the apps then ran (**Tested once**).
 
 ### 2.4 Network inputs (production only)
 
@@ -100,8 +102,8 @@ The module creates **no** virtual network, subnet, DNS zone or resource group. H
 |---|---|---|
 | Resource group | An **existing** group in the hub subscription | Read from the code |
 | `function_subnet_ids.sync` and `.renew` | Two subnets, each delegated to `Microsoft.App/environments`, **at least /27** ([Flex Consumption networking](https://learn.microsoft.com/azure/azure-functions/flex-consumption-how-to#configure-virtual-network-integration)). The module takes one subnet per app. Whether the two apps may share one was not tested | Microsoft docs |
-| `private_endpoint_subnet_id` | A subnet for the private endpoints: one for the factory vault, `blob` and `queue` for each app's storage, `table` for the renewal app's state, and `sites` for each app | Planned only |
-| `private_dns_zone_ids` | Existing zones: `privatelink.vaultcore.azure.net`, `privatelink.blob.core.windows.net`, `privatelink.queue.core.windows.net`, `privatelink.table.core.windows.net`, `privatelink.azurewebsites.net`. Leave one `null` when a central Azure Policy registers the DNS records for you | Planned only |
+| `private_endpoint_subnet_id` | A subnet for the private endpoints: one for the factory vault, `blob` and `queue` for each app's storage, `table` for the renewal app's state, and `sites` for each app | Terraform **Planned only**; ARM **Tested once** (section 5.8) |
+| `private_dns_zone_ids` | Existing zones: `privatelink.vaultcore.azure.net`, `privatelink.blob.core.windows.net`, `privatelink.queue.core.windows.net`, `privatelink.table.core.windows.net`, `privatelink.azurewebsites.net`. Leave one `null` when a central Azure Policy registers the DNS records for you | Terraform **Planned only**; ARM **Tested once** (section 5.8) |
 | **A route and DNS from the sync app to every destination vault** | The module creates **no private endpoint for a destination vault**. If a destination has public access off or a firewall, the network team must provide a path: a private endpoint to that vault that the function's network resolves, or a virtual-network rule for the function subnet ([Key Vault network security](https://learn.microsoft.com/azure/key-vault/general/network-security)). A private endpoint to a vault in another subscription needs its connection approved on that side | Not tested. Only the **failure** case was run (section 3.3, row 3) |
 | **Outbound HTTPS to the CA** | The renewal app calls `www.digicert.com` (`DIGICERT_API_BASE`). A VNet-integrated app needs an allowed route out (firewall rule or NAT). Not included in the cost estimate | Read from the code |
 | Azure Monitor | Application Insights and Log Analytics keep **public ingestion and query endpoints** in both variants, with Entra-only sign-in (no instrumentation key). An Azure Monitor private link scope is **not built** | Read from the code |
@@ -204,9 +206,11 @@ Record each consumer's pickup time in the worksheet. If a consumer cannot wait f
 
 ## 5. Deploy the factory
 
+Sections 5.1 to 5.7 use Terraform. Section 5.8 is the same deployment as an ARM template; read it first if your estate deploys ARM or Bicep.
+
 ### 5.0 Rehearse first
 
-Run `terraform/poc` in a sandbox before the production stack. It creates its own spoke vaults and, if you ask, an Application Gateway, and runs with public endpoints. If your policy forbids public network access, you need the same exemptions the lab needed (four narrow, time-limited ones), or you rehearse the private mode in a sandbox that has the network. The rehearsal is where you meet your own policies before they stop the real change. **Tested** in the lab (`terraform/poc`).
+Run `terraform/poc` in a sandbox before the production stack. It creates its own spoke vaults and, if you ask, an Application Gateway, and runs with public endpoints. If your policy forbids public network access, you need the same exemptions the lab needed (four narrow, time-limited ones), or you rehearse the private mode in a sandbox that has the network. The rehearsal is where you meet your own policies before they stop the real change. **Tested** in the lab (`terraform/poc`). The ARM proof of concept (`deploy/poc`, behind the first Deploy to Azure button) is the same rehearsal without Terraform. **Tested** in the lab too, from a raw template address with the Azure CLI; the button itself was not pressed ([test report, section 10](TEST-REPORT.md#10-the-arm-template-proof-of-concept)).
 
 ### 5.1 Get the code
 
@@ -304,6 +308,32 @@ az keyvault secret set --vault-name <factory vault> --name ca-digicert-api-key -
 ```
 
 The name must start with `ca-`: the renewal identity can read only secrets with that prefix, and the sync identity can read none of them (both enforced by an ABAC condition on the role assignment, **Tested**: HTTP 403). Never put the key on a command line or in a variable file. Delete the file and **remove the temporary role** afterwards. Rotating the key later means writing a new version of the same secret ([OPERATIONS.md](OPERATIONS.md#routine-jobs)).
+
+### 5.8 The same deployment as an ARM template
+
+`deploy/production` builds the same factory as `terraform/production`, as an ARM template compiled from Bicep. Use it when your pipelines already deploy ARM or Bicep, when you would rather not keep a Terraform state file, or when a platform team wants a template that it can review and start from the portal. The parameter for each Terraform variable is listed in [OPERATIONS.md](OPERATIONS.md#parameters-and-their-terraform-variables).
+
+**Tested once:** a deployment on a sample landing zone (`deploy/production/examples/landing-zone.bicep`), with the test CA and two public destination vaults, started from the command line with a parameters file. It passed the end-to-end test (11 of 11) and the access audit (14 of 14), and a closed vault refused a caller who held a role ([test report, section 11](TEST-REPORT.md#11-the-arm-template-production-private-network)). **Not tested:** the portal form behind the Deploy to Azure button, a deployment started by a pipeline's service principal, a private endpoint to a destination vault, a DigiCert-backed deployment, and the factory vault's network settings during the end-to-end run (they were opened by hand and not recorded).
+
+1. **Register `Microsoft.App`** in the factory's subscription: `az provider register --namespace Microsoft.App --wait`. Without it the deployment retries for about 12 minutes and then fails with `ServiceAssociationLink ... Please check if 'Microsoft.App' is registered`. **Seen** on the first attempt in the lab. The other providers of section 2.5 apply as well.
+2. **Check the deployer's rights** (section 2.1 lists them and the header of `deploy/production/main.bicep` repeats them): Owner, or Contributor plus User Access Administrator, on the resource group; Owner or User Access Administrator on every destination vault; Contributor on every destination vault while `enableDestinationAudit` is `true` (the default); and the right to create custom roles at subscription scope.
+3. **Create the resource group**, in the region of the factory. The template deploys into a group that exists, and the region of a group cannot change later.
+4. **Fill in the parameters.** Six have no default: `suffix`, `destinationVaultIds`, `privateEndpointSubnetId`, `syncFunctionSubnetId`, `renewFunctionSubnetId` and `alertEmailAddresses`.
+   * `destinationVaultIds` is an object, `{ "<key>": "<destination vault resource id>" }`, with vaults from any subscription of the tenant. A key is only a label (the app's destination list and the `kvsync` tag use it). The template names each role assignment from the vault, the identity and the role, so renaming a key replaces nothing. **Read from the template**, not tested.
+   * `renewSettings` takes the non-secret DigiCert settings. The five `*PrivateDnsZoneId` parameters take the zones of section 2.4; leave one empty when a central policy registers the records.
+   * **Pin `packageBaseUri`** to a commit or tag of this repository's `deploy/packages`, or host the two zips yourself. Its default is the `main` branch, which changes whenever the repository does. `deployCode` set to `false` skips the code.
+5. **Deploy.**
+
+   ```bash
+   az deployment group create --resource-group <factory resource group> \
+     --template-file deploy/production/azuredeploy.json --parameters @factory.parameters.json
+   ```
+
+   The lab deployment took **186 s** once the provider was registered. The Deploy to Azure button in the README opens the same template and asks for the resource group (**not tested**).
+6. **Read the outputs**, above all `nextSteps`, and then do section 5.7 (the CA credential) **from a host that reaches the factory vault's private endpoint**: the template cannot put the key into a private vault for you. A heartbeat alert a few minutes after the deployment is normal, because no sweep has run yet. Read the log before you treat it as an outage ([test report](TEST-REPORT.md#8-what-went-wrong-while-testing), item 16).
+7. **Verify** as in section 5.6. There is no `terraform plan`; `az deployment group what-if` compares the template with the live resources (**not tested** against a changed stack).
+
+**Afterwards, the routes differ in two ways.** There is no state to protect, and there is no `destroy`: you remove the stack by deleting the resource group, then the policy exemptions you made, then the two custom roles (`KV Certificate Importer <suffix>` and `KV Certificate Issuer <suffix>`), which belong to the subscription. And an ARM deployment does not undo what the template no longer lists, so a destination vault that you take out of `destinationVaultIds` keeps its role assignment and its diagnostic setting until you delete them. See [OPERATIONS.md](OPERATIONS.md#changing-settings-and-code) (**not tested** on the production template).
 
 ## 6. Issue the first certificate
 
@@ -441,10 +471,10 @@ The sync **never deletes anything.** Every step below is yours to take.
 | Goal | Steps |
 |---|---|
 | **Stop copying one certificate** | Remove the `kvsync` tag in the factory vault. The copies stay where they are. Delete them yourself if they should go |
-| **Stop copying to one vault** | Remove its key from `destination_vault_ids` and apply. The role assignment and the diagnostic setting go; the copies stay |
+| **Stop copying to one vault** | Remove its key from `destination_vault_ids` and apply. The role assignment and the diagnostic setting go; the copies stay. With the ARM template, deleting the key from `destinationVaultIds` does **not** remove them: delete the sync identity's role assignment and the `kvsync-audit-<suffix>` diagnostic setting on that vault yourself |
 | **Give a consumer its own certificate back** | Re-point it at its old certificate or version (section 8), then stop copying (above) |
 | **Pause the factory** | Stop the two function apps. The heartbeat alert fires about an hour later, so tell the on-call team. Copies keep serving |
-| **Remove the factory** | `terraform destroy` from the connected host. The factory vault has purge protection, so its name stays reserved for the retention period (7 days). Destination vaults and their copies are untouched. Move the CA credential to wherever your other CA credentials live first |
+| **Remove the factory** | Terraform: `terraform destroy` from the connected host. ARM: delete the resource group, then the two custom roles (section 5.8). The factory vault has purge protection, so its name stays reserved for the retention period (7 days). Destination vaults and their copies are untouched. Move the CA credential to wherever your other CA credentials live first |
 | **Recover the factory** | Rebuild it with `terraform apply`; see [OPERATIONS.md](OPERATIONS.md#recovering-the-factory). **Described, not practised** |
 
 ## 11. What was tested, and what was not
@@ -457,9 +487,10 @@ The sync **never deletes anything.** Every step below is yours to take.
 | Three alerts fired and cleared; a destination outage healed by itself | **Tested** |
 | Application Gateway reads a copy; a forced refresh | **Tested** |
 | The inventory script | **Tested** on three vaults; the duplicates report has offline tests |
-| Everything in private mode: private endpoints, VNet-integrated apps, private deployment | **Planned only** |
+| Everything in private mode, as the **ARM template**: private endpoints, VNet-integrated apps, code deployed by Azure, on a sample landing zone with a test CA and public destination vaults | **Tested once** (section 5.8, test report section 11) |
+| Private mode as **Terraform**, a private endpoint to a destination vault, the factory with its data plane closed for the whole run | **Planned only / Not tested** |
 | The DigiCert client, domain validation, DigiCert DNS-based validation | **Not tested / not built** |
-| A remote Terraform backend; running Terraform from a pipeline | **Not tested** |
+| A remote Terraform backend; running Terraform from a pipeline; the Deploy to Azure button; an ARM deployment from a pipeline | **Not tested** |
 | Access-policy vaults; vaults behind a firewall or private endpoint (success path); other tenants; sovereign clouds | **Not tested** |
 | Consumers other than Application Gateway; an Application Gateway reading a vault in another subscription; unattended pickup | **Not tested** |
 | Purging a deleted copy; tagging a destination certificate first; adopting a real integrated-CA certificate | **Not tested** |
@@ -473,7 +504,7 @@ The sync **never deletes anything.** Every step below is yours to take.
 4. Which vaults have a firewall or a private endpoint, and who owns the network path to them?
 5. Which consumers read each vault, and how fast does each pick up a new version?
 6. Who may write tags on a factory certificate, and who is paged by an alert?
-7. Can the apply host reach the private endpoints? Is there a self-hosted agent?
+7. Can the apply host reach the private endpoints? Is there a self-hosted agent? (With the ARM template the code deploys itself, but the CA credential still needs a host that reaches the factory vault.)
 8. Which policies deny public access, role definitions or diagnostic settings, and who can grant an exemption?
 9. Which certificates are non-exportable, and what depends on them?
 10. Who owns the decision to rotate a certificate in an emergency, and is that the same person who can set `kvrenew-now`?

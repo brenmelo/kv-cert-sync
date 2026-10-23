@@ -63,7 +63,7 @@ What to know first:
 
 * **The function code is not in the template.** Each app pulls a zip from `packageBaseUri`, by default the `main` branch of this repository, which changes whenever the repository does. Pin it to a release tag or a commit, or host the two zips yourself.
 * The deployment gives the person who starts it **Key Vault Administrator** on the three vaults and read access to the event queues, so that the live tests can run. That is for a proof of concept only. Set `operatorObjectId` and `operatorPrincipalType` when a service principal or a pipeline deploys.
-* If an Azure Policy forces public network access off, or demands purge protection, create time-boxed policy exemptions on the three resource groups a few minutes **before** you press the button ([docs/OPERATIONS.md](docs/OPERATIONS.md#removing-the-arm-proof-of-concept)).
+* If an Azure Policy forces public network access off, or demands purge protection, create time-boxed policy exemptions on the three resource groups a few minutes **before** you press the button ([docs/OPERATIONS.md](docs/OPERATIONS.md#before-you-deploy)).
 * Deploying again with the same `suffix` updates the same resources.
 
 ### Route 2: Terraform
@@ -84,7 +84,7 @@ Terraform cannot be opened from a button. The closest routes are Azure Cloud She
 
 ### ARM template or Terraform?
 
-Both build the same factory with the same settings, roles, alerts and event subscriptions; a comparison of the two live deployments found no difference except an empty list that one writes as `null`.
+Both build the same factory with the same settings, roles, alerts and event subscriptions. A comparison of the two live deployments found no difference in effect; three cosmetic ones (line endings in the alert query, the letter case of one scope string, an empty list written as `null` or as `[]`) are listed in [the test report](docs/TEST-REPORT.md#is-it-the-same-factory-as-the-terraform-stack).
 
 | | ARM template (`deploy/`) | Terraform (`terraform/`) |
 |---|---|---|
@@ -94,20 +94,22 @@ Both build the same factory with the same settings, roles, alerts and event subs
 | State | None. ARM records the deployment | A state file you must keep and protect |
 | Removing it | Delete the resource groups and two custom roles | `terraform destroy` |
 | Application Gateway as a test consumer | Not included | Optional module |
-| Tested | Deployed from its raw GitHub URL; every live test passed | Every live test passed |
+| Tested | Deployed from the raw GitHub address of its file (a branch, before the merge); every live test passed | Every live test passed |
+
 ## Production
 
 [docs/CUSTOMER-RUNBOOK.md](docs/CUSTOMER-RUNBOOK.md) is the step-by-step plan for an estate that already has vaults: inventory, a decision for every vault, deployment, a first certificate, onboarding in waves, consumer cut-over, rollback. Both production deployments adopt what you already have: **a resource group, a private-endpoint subnet, two subnets delegated to `Microsoft.App/environments`, the private DNS zones (or a central policy that registers them) and the resource ids of the destination vaults**. They create no network and no destination vault. About US$64 a month at list price, US$58 of it private endpoints ([estimate](docs/OPERATIONS.md#cost)).
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fbrenmelo%2Fkv-cert-sync%2Fmain%2Fdeploy%2Fproduction%2Fazuredeploy.json)
 
-* **ARM template** ([deploy/production](deploy/production)). It deploys at resource-group scope, so the button asks for the resource group. **Register the `Microsoft.App` resource provider in the subscription first** (`az provider register --namespace Microsoft.App --wait`). Without it the function apps retry for about 12 minutes and the deployment then fails with `ServiceAssociationLink ... Please check if 'Microsoft.App' is registered`. Azure Resource Manager deploys the function code, so no machine inside the network is needed for that: the platform pulls the two zips from `packageBaseUri` (pin it, or host the packages yourself; `deployCode=false` skips the code). It was deployed **once**, in a lab, on top of the sample landing zone in [deploy/production/examples](deploy/production/examples), with a private test CA ([test report](docs/TEST-REPORT.md#the-arm-template-production-private-network)). It cannot put your CA's API key into the private vault: the `nextSteps` output lists what is left to do.
+* **ARM template** ([deploy/production](deploy/production)). It deploys at resource-group scope, so the button asks for the resource group. **Register the `Microsoft.App` resource provider in the subscription first** (`az provider register --namespace Microsoft.App --wait`). Without it the function apps retry for about 12 minutes and the deployment then fails with `ServiceAssociationLink ... Please check if 'Microsoft.App' is registered`. Azure Resource Manager deploys the function code, so no machine inside the network is needed for that: the platform pulls the two zips from `packageBaseUri` (pin it, or host the packages yourself; `deployCode=false` skips the code). It was deployed **once**, in a lab, on top of the sample landing zone in [deploy/production/examples](deploy/production/examples), with a private test CA ([test report](docs/TEST-REPORT.md#11-the-arm-template-production-private-network)). It cannot put your CA's API key into the private vault: the `nextSteps` output lists what is left to do.
 * **Terraform** ([terraform/production](terraform/production)). Planned (60 resources to add) and **never applied**. With public access off, the machine that runs `terraform apply` must reach the function apps' private deployment endpoint, so use a self-hosted agent or a jump host inside the network. A public Cloud Shell or a GitHub-hosted runner cannot do it.
 
 ![Production variant](docs/diagrams/production.png)
+
 ## What was and was not tested
 
-Each result ran once, in a lab, on 20 and 21 October 2026. Details and times: [docs/TEST-REPORT.md](docs/TEST-REPORT.md).
+Every result below comes from a lab, on 20, 21 and 22 October 2026: the Terraform proof of concept on the first two days, the ARM templates on the last. Each ran once unless the report says otherwise. Details and times: [docs/TEST-REPORT.md](docs/TEST-REPORT.md).
 
 | Area | Result |
 |---|---|
@@ -119,9 +121,10 @@ Each result ran once, in a lab, on 20 and 21 October 2026. Details and times: [d
 | Three alerts | All **fired and cleared by themselves**. They take 26 to 31 minutes (failures) to about 1 h 45 min (expiring) to clear, by design |
 | A destination outage | Healed by itself 160 s after access returned. The `failures` alert fired 56 s after the first failure line, because the outage lasted past one sweep. An outage shorter than that heals without an alert |
 | Application Gateway reading a copy | Served the vault's certificate. A forced refresh took 60 s. Unattended pickup was **not concluded** (the gateway was stopped by something outside the test) |
+| The proof of concept deployed from its **ARM template** | **Pass.** Deployed in 3 min 35 s. End to end 11 of 11, 11 of 11, then 12 of 12; access audit 14 of 14; edge cases 11 of 11. It found a real race (two events for one certificate imported it twice), which is fixed with a lock per certificate ([section 10.1](docs/TEST-REPORT.md#101-two-events-for-one-certificate-imported-it-twice)). The Deploy to Azure button and its portal form were **not** used: the lab deployed from a raw URL with the CLI |
 | **A real CA order (DigiCert or any other)** | **Not tested.** The largest gap |
 | Domain validation (DCV) for the CA | **Not built** |
-| The private-network production stack | **Planned and validated only** |
+| The private-network production stack | **ARM template: deployed once**, in a sample landing zone with a test CA and public destination vaults. End to end 11 of 11, access audit 14 of 14, and a closed vault refused a caller who held a role ([section 11](docs/TEST-REPORT.md#11-the-arm-template-production-private-network)). **Terraform: planned and validated only** |
 | Azure Government, AKS, API Management, Front Door, other tenants | Not tested |
 | More than three vaults and about ten certificates | Not tested |
 
