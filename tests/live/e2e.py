@@ -178,6 +178,9 @@ def main() -> int:
         verdict("R2 the rotation created a NEW key (public key differs)", pub_n(newc) != pub_n(first))
         verdict("R2 thumbprint changed and every destination followed", all(thumb(d) == thumb(newc) for d, _ in copies.values()) and thumb(newc) != thumb(first))
         verdict("R2 destinations still hold the previous version (rollback is possible)", all(versions(cl, name) >= 2 for cl in dests.values()))
+        counts = {k: versions(cl, name) for k, cl in dests.items()}
+        verdict("R2 one copy per version: each destination holds exactly as many versions as the source (a duplicate import would show here)",
+                all(n == versions(src, name) for n in counts.values()), f"source={versions(src, name)} destinations={counts}")
         verdict("R2 the one-shot tag is NOT on the new version (no rotation loop)", "kvrenew-now" not in (newc.properties.tags or {}), str(sorted(newc.properties.tags or {})))
         ev["scenarios"]["R2"] = {
             "rotation_after_tag_s": round(time.time() - t0, 1),

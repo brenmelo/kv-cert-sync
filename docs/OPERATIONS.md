@@ -1,6 +1,6 @@
 # Operating the certificate factory
 
-For the team that runs the factory after it is deployed. It lists what runs, every setting and tag, what the log lines mean, what the alerts do, what it costs, the routine jobs, and what to check when something is wrong. The reasoning behind the design is in [DESIGN-QA.md](DESIGN-QA.md). The evidence is in [TEST-REPORT.md](TEST-REPORT.md). The steps to put it into an existing estate are in [CUSTOMER-RUNBOOK.md](CUSTOMER-RUNBOOK.md).
+For the team that runs the factory after it is deployed. It lists what runs, every setting and tag, what the log lines mean, what the alerts do, what it costs, the routine jobs, and what to check when something is wrong. Settings are shown by their Terraform variable. The ARM templates differ in a few places, listed in [ARM templates](#arm-templates). The reasoning behind the design is in [DESIGN-QA.md](DESIGN-QA.md). The evidence is in [TEST-REPORT.md](TEST-REPORT.md). The steps to put it into an existing estate are in [CUSTOMER-RUNBOOK.md](CUSTOMER-RUNBOOK.md).
 
 Wherever this page says **tested**, the behaviour was seen in the proof of concept (see the test report). Wherever it says **documented** or **read from the code**, it was not exercised.
 
@@ -13,6 +13,7 @@ Wherever this page says **tested**, the behaviour was seen in the proof of conce
 7. [Routine jobs](#routine-jobs)
 8. [Troubleshooting](#troubleshooting)
 9. [Recovering the factory](#recovering-the-factory)
+10. [ARM templates](#arm-templates)
 
 ## What runs
 
@@ -32,7 +33,7 @@ The deployed ingest path is *Event Grid, then a storage queue, then the function
 
 ## Settings
 
-All settings are Terraform. Edit the variable, run `terraform apply`. Do not edit app settings in the portal: the next apply overwrites them.
+Settings are shown by their Terraform variable; the ARM templates take the same settings as parameters ([the mapping](#parameters-and-their-terraform-variables)). Change the variable or the parameter and apply or deploy again. Do not edit app settings in the portal: the next apply overwrites them, and a redeployment of an ARM template is expected to do the same (not tested).
 
 ### Sync app
 
@@ -197,11 +198,11 @@ AzureDiagnostics
 
 Expect the sync identity (and only it) on the factory vault. The caller address changes between runs on Flex Consumption. In private mode it is a private address.
 
-`scripts/la_query.py --workspace <workspace id> --timespan PT12H --query "<KQL>"` runs a query from a terminal. The workspace ID is the Terraform output `log_analytics_customer_id`. Column names such as `first` and `last` are reserved: use `t0` and `t1`.
+`scripts/la_query.py --workspace <workspace id> --timespan PT12H --query "<KQL>"` runs a query from a terminal. The workspace ID is the Terraform output `log_analytics_customer_id` (the proof-of-concept ARM template has an output of the same name; the production one calls it `logAnalyticsCustomerId`). Column names such as `first` and `last` are reserved: use `t0` and `t1`.
 
 ## Alerts
 
-Three rules, all on the function logs, all **stateful** (one message when the rule fires, one when it clears). Terraform: `modules/hub/alerts.tf`.
+Three rules, all on the function logs, all **stateful** (one message when the rule fires, one when it clears). Terraform: `modules/hub/alerts.tf`. ARM: the alerting section of `deploy/modules/hub.bicep`. On the two live proof-of-concept stacks the rules matched in frequency, window, severity and query text (the line endings aside).
 
 | Rule | Severity | Look-back and frequency | Fires when |
 |---|---|---|---|
@@ -217,7 +218,7 @@ Measured in the proof of concept (full timings in [TEST-REPORT.md](TEST-REPORT.m
 | `heartbeat`, after stopping the renewal app | about 69 min after the stop | 45 min after the restart |
 | `replica-expiring`, after copying a 3-day certificate | **68 s** after the first warning line | **1 h 45 min** after the last warning line |
 
-**Why clearing is slow.** Microsoft documents that a stateful log alert resolves only after the condition has been false for several evaluation periods. In all three runs the alert resolved about one minute after the **third** clean evaluation. The `failures` and `replica-expiring` rules first have to wait for the last matching line to leave the look-back; `heartbeat` does not, because a new sweep line makes its condition false at once. From the rule settings that gives **26 to 31 minutes after the last failure line** for `failures` (measured: 27), **31 to 46 minutes after the restarted app's first sweep** for `heartbeat` (measured: 44) and **1 h 31 min to 1 h 46 min after the last warning line** for `replica-expiring` (measured: 1 h 45 min, the long end). The spread is where the evaluation grid happens to fall. The count of three and the one-minute offset are what was observed, not something Microsoft documents. A late "resolved" does not mean the fix failed. To change it, edit `window_duration` and `evaluation_frequency` in `alerts.tf`. To make a rule less twitchy, raise `number_of_evaluation_periods` and `minimum_failing_periods_to_trigger_alert` in its `failing_periods` block.
+**Why clearing is slow.** Microsoft documents that a stateful log alert resolves only after the condition has been false for several evaluation periods. In all three runs the alert resolved about one minute after the **third** clean evaluation. The `failures` and `replica-expiring` rules first have to wait for the last matching line to leave the look-back; `heartbeat` does not, because a new sweep line makes its condition false at once. From the rule settings that gives **26 to 31 minutes after the last failure line** for `failures` (measured: 27), **31 to 46 minutes after the restarted app's first sweep** for `heartbeat` (measured: 44) and **1 h 31 min to 1 h 46 min after the last warning line** for `replica-expiring` (measured: 1 h 45 min, the long end). The spread is where the evaluation grid happens to fall. The count of three is documented: for a log search alert with a frequency of 5 to 15 minutes, Azure Monitor resolves it when the condition has not been met for three frequency periods (two periods for 15 minutes to 11 hours, and the rules here, at exactly 15 minutes, behaved like the first row; [What are Azure Monitor alerts?](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-overview#alerts-and-state)). The one-minute offset is what was observed. A late "resolved" does not mean the fix failed. To change it, edit `window_duration` and `evaluation_frequency` in `alerts.tf`. To make a rule less twitchy, raise `number_of_evaluation_periods` and `minimum_failing_periods_to_trigger_alert` in its `failing_periods` block. In the ARM templates the same four settings are `windowSize`, `evaluationFrequency`, `numberOfEvaluationPeriods` and `minFailingPeriodsToAlert` in `hub.bicep`; recompile after editing (see [ARM templates](#arm-templates)).
 
 **What is not covered.**
 
@@ -225,6 +226,8 @@ Measured in the proof of concept (full timings in [TEST-REPORT.md](TEST-REPORT.m
 * **A short outage heals without an alert, on purpose.** Only the timer sweep writes `failed-*` lines. The event path retries by itself.
 * **The poison queue is not monitored.** If the event path keeps failing, the message moves to `kvsync-events-poison` or `kvrenew-events-poison` and nothing watches it. The sweep repeats the work, and its failure line raises the alert.
 * **A dead workspace or action group is silent.** The heartbeat covers a dead app, not a dead monitor.
+
+**First-run noise.** Expect a Sev 2 heartbeat message in the first hour after a deployment: the rules are created before the apps have logged a first sweep. **Seen** on the production ARM stack, where both heartbeats fired before any sweep had run. On the proof of concept the sync app's alert fired 7 minutes after its rule was created, 77 s after the first sweep line had reached the workspace, and the cause was **not established**. All four heartbeat alerts of the two stacks stayed open for 46 minutes (three 15-minute periods, plus a minute), the clearing rule described above. The `failures` rule also matches `failed-permanent`, so the deliberate failures of the edge-case test raise it, and it cleared about 31 minutes after the last failure line (15 minutes in its window plus three 5-minute periods; seen twice). Read the `KVSYNC` and `KVRENEW` lines before you treat either as an outage ([TEST-REPORT.md](TEST-REPORT.md), sections 10 and 11).
 
 ### E-mail receivers
 
@@ -259,9 +262,13 @@ Two things the numbers show. First, **neither free grant was applied in the test
 
 Production is dominated by the private endpoints: one for the factory vault, two for each app's storage (blob, queue), one for the renewal table, one for each app's management endpoint. Data processing through them is extra and was not priced. A firewall or NAT gateway for the renewal app's outbound call to the CA is not included. Reuse the private DNS zones you already have.
 
+**The ARM templates** build the same resources, without the optional Application Gateway, so this estimate is expected to apply. **No cost was measured on an ARM deployment.** Their defaults match Terraform's: 30 days of logs and LRS storage in the proof of concept, 90 days and ZRS in the production template.
+
 **Not known.** Key Vault bills a "Certificate Renewal Request" meter at US$3.00 each. Whether it applies to a renewal that goes through the CSR path, as this factory's does, is **unconfirmed**; ask Key Vault billing before you count on it either way. And the certificates themselves cost whatever your CA charges.
 
 ## Routine jobs
+
+Where a job below says *apply*, the ARM route deploys the template again. The jobs that differ are in [ARM templates](#changing-settings-and-code).
 
 **Opt a certificate in.** Add `kvsync=all` (or `kvsync=<key>,<key>`). Add `kvrenew=on` if the factory should renew it. The copy appears at the next event, or at the next sweep.
 
@@ -306,13 +313,78 @@ az keyvault certificate show --vault-name <destination> --name <cert> --query x5
 | An alert fired but no mail came | Address not verified, sender filtered, or a mailbox rule | See [E-mail receivers](#e-mail-receivers) |
 | `terraform destroy` of a resource group refuses to delete | A policy created resources inside it (the test lab added alert rules) and the provider's `prevent_deletion_if_contains_resources` safeguard is on | Remove those resources, then destroy. **Leave the safeguard on** |
 | A command with `&` in a URL is cut short | `&` ends a command in `cmd.exe`, and PowerShell hands `az.cmd` an unquoted argument, so quotes do not help (seen in the lab) | Do not put `&` in the URL: `az rest --method get --url "<url without the query>" --url-parameters api-version=2019-05-05-preview timeRange=1d` (**tested**), or call the API from a script |
+| An ARM production deployment runs for about 12 minutes and fails with `ServiceAssociationLink ... Please check if 'Microsoft.App' is registered` | The `Microsoft.App` resource provider is not registered in the subscription, and the VNet integration of the function apps needs it | **Seen** on the first production attempt. `az provider register --namespace Microsoft.App --wait`, then deploy again (**tested**: 186 s). The message names the cause only at its end |
+| A destination holds one more version of a certificate than the factory | Two instances of the sync app imported the same version at the same moment. The lock that prevents it works inside one instance | **Not seen**; reasoned from the code ([TEST-REPORT.md](TEST-REPORT.md), section 10.1). The extra version is identical and valid, and the next sweep finds the destination current. It does not raise an alert |
+| A heartbeat alert fires soon after a deployment | Usually the rule was evaluated before the first sweep had written its line, or the app had not started | **Seen** after both ARM deployments, and it cleared by itself about 46 minutes later (three evaluation periods of 15 minutes). If `reconcile-complete` lines are arriving, nothing is wrong. See *First-run noise* under [Alerts](#alerts) |
 
 ## Recovering the factory
 
 **Described, not practised.**
 
 * The certificates are in Key Vault. Copies keep serving while the factory is down. Only *new issuance* stops.
-* The factory is code. `terraform apply` rebuilds the apps, queues, roles and alerts. Keep the Terraform state in a remote backend with Entra authentication.
+* The factory is code. `terraform apply`, or a deployment of the ARM template again, rebuilds the apps, queues, roles and alerts. For Terraform, keep the state in a remote backend with Entra authentication. ARM keeps no state of its own.
 * The renewal app's **state table** (`kvrenew`) records the order of each in-flight renewal, so that a restart resumes the order instead of placing a new one. If the table is lost, an order that was in flight is not known any more and the next sweep would place a new request. Protect the storage account, and look at any renewal that was in flight when it was lost.
 * The CA credential is a secret in the factory vault. Keep it where you keep your other CA credentials, so that it can be put back.
 * If the factory vault's region is lost, Microsoft may fail the vault over to its paired region, where it is read-only. Renewal pauses until it is writable ([DESIGN-QA.md](DESIGN-QA.md), section 4). West US 3 and a few other regions have no managed failover.
+
+## ARM templates
+
+`deploy/poc` and `deploy/production` build the same factory as `terraform/poc` and `terraform/production`. The file to edit is the Bicep source (`main.bicep` and `deploy/modules`). `azuredeploy.json` is compiled from it (`bicep build`) and is the file the Deploy to Azure buttons open; CI fails when the two differ. Everything above applies to both routes: tags, log lines, queries, alerts and troubleshooting. This section lists what is different. The evidence is in [TEST-REPORT.md](TEST-REPORT.md), sections 10 and 11. On the two live proof-of-concept stacks the alert rules, event subscriptions, custom roles, diagnostic settings, role assignments (with their ABAC conditions) and app settings came out the same.
+
+### Before you deploy
+
+* **Register `Microsoft.App` (production template).** In the subscription of the factory: `az provider register --namespace Microsoft.App --wait`. The VNet integration of the function apps needs it. Without it the deployment retries for about 12 minutes and then fails with `ServiceAssociationLink ... Please check if 'Microsoft.App' is registered`. **Seen** on the first attempt in the lab; after registering, the same deployment took 186 s.
+* **Create policy exemptions first, if your policies need them.** The Terraform proof of concept creates its exemptions and waits for them (`policy_exemptions`, `policy_propagation_wait`). An ARM deployment cannot wait for an exemption to take effect, so create the three resource groups yourself, in the regions the template will use (a group's region cannot change), put a time-boxed exemption on each, wait a few minutes, and then deploy. The template accepts groups that already exist. In the lab the groups and the exemptions were created about 5 minutes ahead and the deployment worked at the first attempt. Creating them at the moment of the deployment, or not at all, was **not tested**, and the error that a policy produces was not captured. When the assignment is an initiative, add `--policy-definition-reference-ids` to limit the waiver to the policies that block you.
+
+  ```bash
+  az policy exemption create --name <name> --scope <resource group id> --policy-assignment <assignment id> \
+      --exemption-category Waiver --expires-on <date and time>
+  ```
+
+* **Deployer rights.** Proof of concept: Owner on every subscription it touches (it creates resource groups, role assignments and two custom roles). Production, as listed in the header of `deploy/production/main.bicep`: Owner, or Contributor plus User Access Administrator, on the resource group; Owner or User Access Administrator on every destination vault; Contributor on every destination vault while `enableDestinationAudit` is true (it adds a diagnostic setting); and the right to create custom roles at subscription scope.
+
+### Parameters and their Terraform variables
+
+The ARM parameter is the camelCase form of the Terraform variable (`reconcile_schedule` is `reconcileSchedule`, `destination_vault_ids` is `destinationVaultIds`). The exceptions, found by comparing the two sets of names:
+
+| Terraform | ARM | Difference |
+|---|---|---|
+| `hub_subscription_id`, `tenant_id` | none | The subscription you deploy to, and its tenant |
+| `spoke_a_subscription_id`, `spoke_b_subscription_id` | `spokeASubscriptionId`, `spokeBSubscriptionId` | Required in Terraform. Empty in ARM means the hub subscription |
+| `hub_location`, `spoke_a_location`, `spoke_b_location` | `hubLocation`, `spokeALocation`, `spokeBLocation` | Terraform defaults to three regions (`eastus2`, `westus3`, `northeurope`). In ARM an empty `hubLocation` means the region you pick for the deployment, and an empty spoke location means the hub's region, so by default all three vaults sit in one region |
+| `resource_group_name` (production) | none | The resource group you deploy to. The production template deploys at resource-group scope, so the group must exist |
+| `suffix` (proof of concept) | `suffix` | Required in Terraform. Empty in ARM: five characters derived from the subscription id, the same every time for that subscription |
+| `name_prefix` | `namePrefix` | The defaults are `kvsync-tf` and `kvsync-arm`, so that both stacks can exist side by side |
+| `owner_tag`, `delete_after` | `ownerTag`, `deleteAfter` | Required in Terraform, optional in ARM |
+| `operator_object_id` | `operatorObjectId`, `operatorPrincipalType` | Required in Terraform. Empty in ARM means whoever starts the deployment. Set both when a service principal or a pipeline deploys |
+| `policy_exemptions`, `policy_propagation_wait` | none | See above |
+| `enable_app_gateway`, `app_gateway_certificate_name` | none | The Application Gateway test consumer is Terraform only |
+| `function_subnet_ids` | `syncFunctionSubnetId`, `renewFunctionSubnetId` | One parameter per app |
+| `private_dns_zone_ids` | `vaultPrivateDnsZoneId`, `blobPrivateDnsZoneId`, `queuePrivateDnsZoneId`, `tablePrivateDnsZoneId`, `sitesPrivateDnsZoneId` | One parameter per zone. Leave one empty when a central policy registers the records |
+| `digicert_settings` | `renewSettings` | The same settings |
+| `storage_replication_type` | `storageSkuName` | `ZRS` in Terraform, `Standard_ZRS` in ARM |
+| none | `spokeAPurgeProtection`, `spokeBPurgeProtection` | Terraform fixes them in `terraform/poc/main.tf` (on for A, off for B). The ARM defaults are the same |
+| none | `packageBaseUri`, `deployCode` | Where the function code comes from, and whether to deploy it. See below |
+| none | `enableDestinationAudit` (production) | Turns off the diagnostic setting on each destination vault, for a deployer who has no Contributor there. Terraform always adds it |
+
+### Changing settings and code
+
+* **A setting or a schedule.** Change the parameter and deploy again with the same `suffix`. ARM updates the resources in place (**tested**: two redeployments over the live proof of concept, 2 min 8 s and 2 min 10 s). A redeployment is expected to rewrite the app settings the template declares, so do not edit them in the portal (not tested).
+* **The code.** `scripts/build_packages.py` builds `deploy/packages/sync/released-package.zip` and `deploy/packages/renew/released-package.zip` from `src/`. The zips are the same bytes every time, and `--check` proves it (CI runs it). Commit the new zips, then deploy with `packageBaseUri` pinned to the new commit or tag. **Tested twice**: the lock fix reached the running apps this way, and a live probe showed the new behaviour. Whether the apps fetch a zip again when the file behind an unchanged address changes was not tested, so use a new address.
+* **The Bicep.** Edit the `.bicep` files, then recompile with the Bicep version pinned in `.github/workflows/ci.yml` (`BICEP_VERSION`): `bicep build deploy/poc/main.bicep --outfile deploy/poc/azuredeploy.json`, and the same for `deploy/production`. Commit the `azuredeploy.json`. The compiled file records the compiler version, and CI recompiles and compares.
+* **Add a destination vault** (production). Add a key and a resource id to `destinationVaultIds` and deploy again, with the rights above on the new vault. Not tested on an existing stack. The proof of concept has two destinations, fixed in the template.
+* **Remove a destination vault** (production). Take it out of `destinationVaultIds` and deploy again: the sync app stops copying there. An ARM deployment in the default incremental mode does not delete what the template no longer lists (documented ARM behaviour), so the sync identity's role assignment on that vault and the diagnostic setting stay until you delete them. Terraform removes both. Not tested.
+* **Look for drift.** There is no state file. `az deployment sub what-if` (proof of concept) or `az deployment group what-if` (production) compares the template with the live resources. It was run before the first deployment of the proof of concept, where it listed 66 resources. **Not tested** against a changed stack.
+
+### Removing the ARM proof of concept
+
+There is no `destroy`. **Described, not run as one procedure on an ARM stack.**
+
+1. Delete the three resource groups (`rg-<namePrefix>-hub`, `rg-<namePrefix>-spoke-a` and `rg-<namePrefix>-spoke-b`). That removes the vaults, the apps, the monitoring, and the role assignments inside them.
+2. Delete the policy exemptions you created.
+3. Delete the two custom roles. They belong to the subscription, not to a group, and a role cannot be deleted while a role assignment still uses it, hence this step comes after step 1: `az role definition delete --name "KV Certificate Importer <suffix>"` and the same for `"KV Certificate Issuer <suffix>"`. List what is left with `az role definition list --custom-role-only true --name "KV Certificate Importer <suffix>"`.
+4. The vaults are soft-deleted, and their names stay reserved for the 7-day retention period. To deploy again with the same `suffix` at once, purge the vaults that have no purge protection: the factory vault and destination B (`az keyvault purge --name <vault> --location <region>`). Destination A has purge protection and cannot be purged: wait out the retention, or use a different `suffix`.
+
+### Not tested on ARM
+
+The Deploy to Azure button and its portal form (the lab deployed from a raw URL with the CLI), deployment by a service principal or a pipeline, deployment from the `main` branch's URL, private endpoints to destination vaults, a DigiCert-backed deployment, `deployCode` set to false, and the cost of an ARM stack. The full list is in [TEST-REPORT.md](TEST-REPORT.md), section 9.

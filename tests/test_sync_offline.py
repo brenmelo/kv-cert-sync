@@ -263,6 +263,62 @@ check("a failure line per failed destination, each with dest=, error type and th
       and any("dest=a" in m for m in two) and any("dest=b" in m for m in two))
 sync.log.removeHandler(_cap)
 
+# ---- two events for ONE certificate that arrive together must import it ONCE
+# (found in the live end-to-end run: a new-version event and a near-expiry event were handled on two threads at the same second,
+# and each destination ended up holding the same certificate twice)
+import threading, time
+
+
+class StatefulVault(FakeVault):
+    """A destination that remembers what was imported and is slow to import, so two overlapping copies would both find it empty."""
+
+    def __init__(self):
+        super().__init__()
+        self.guard = threading.Lock()
+
+    def get_certificate(self, name):
+        with self.guard:
+            return super().get_certificate(name)
+
+    def import_certificate(self, name, raw, enabled=True, tags=None, policy=None):
+        time.sleep(0.3)
+        with self.guard:
+            self.imported.append(tags)
+            version = f"new{len(self.imported)}"
+            self.existing = types.SimpleNamespace(
+                properties=types.SimpleNamespace(version=version, x509_thumbprint=bytes.fromhex(M.thumbprint), tags=tags))
+            return types.SimpleNamespace(properties=types.SimpleNamespace(version=version))
+
+
+def run_together(a, b, triggers):
+    ctx = two_destinations(a, b)
+    barrier = threading.Barrier(len(triggers))
+    results, errors = {}, []
+
+    def one(trigger):
+        try:
+            barrier.wait()
+            results[trigger] = sync.sync_certificate("c", ctx, trigger=trigger)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=one, args=(t,)) for t in triggers]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    return results, errors
+
+
+a, b = StatefulVault(), StatefulVault()
+results, errors = run_together(a, b, ["CertificateNewVersionCreated", "CertificateNearExpiry"])
+check("two events for one certificate at the same moment: no error", not errors and len(results) == 2)
+check("two events for one certificate at the same moment: each destination imports it exactly once", len(a.imported) == 1 and len(b.imported) == 1)
+check("one event copies, the other finds both destinations already current",
+      sorted(r["result"] for rs in results.values() for r in rs) == ["converged-noop"] * 2 + ["copied"] * 2)
+check("one lock per certificate name; two names never wait for each other",
+      sync._cert_lock("x") is sync._cert_lock("x") and sync._cert_lock("x") is not sync._cert_lock("y"))
+
 print("\nALL PASS" if ok else "\nFAILURES")
 import unittest  # noqa: E402  (the checks above run at import time; this wrapper lets `unittest discover` report them)
 
