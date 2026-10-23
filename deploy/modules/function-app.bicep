@@ -5,6 +5,7 @@
 //   * the queue that receives the Key Vault events, and, for the renewal app, its state table,
 //   * Event Grid delivery into that queue (send-only, with the managed identity of the Event Grid system topic),
 //   * the identity's roles on the source vault,
+//   * a wait of about 95 seconds, so that these new role assignments have time to take effect before the app is created,
 //   * a Flex Consumption plan (Linux, Python 3.12) and the function app,
 //   * its code, deployed from a package URL with the "OneDeploy" extension (a remote build installs requirements.txt).
 //
@@ -99,6 +100,11 @@ var storageName = 'st${label}${suffix}'
 var planName = 'plan-${label}-${suffix}'
 var containerName = 'app-package-${siteName}'
 var storageSuffix = environment().suffixes.storage
+
+// Number of steps of the wait for role assignments (see roleWait below). One step is an empty nested deployment, measured at
+// 3.1 to 3.4 seconds, so 30 steps are about 95 seconds. It is a margin, not a guarantee: Microsoft documents delays of up to
+// 10 minutes for role assignments and blob data access.
+var roleWaitSteps = 30
 
 var roleIds = {
   blobOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' // Storage Blob Data Owner
@@ -238,6 +244,28 @@ resource sourceVaultAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 }]
 
+// ------------------------------------------------------------------ wait for the role assignments
+// A new role assignment is not honoured at once by every service. Without this wait, one app of one deployment failed: its code
+// deployment started 26 seconds after the app's last role assignment and failed 16 seconds later with HTTP 403 ("This request is
+// not authorized to perform this operation using this permission") when the platform tried to write the package to the storage
+// account. The other app, with the same timing, succeeded, and deploying the template again succeeded. The Terraform module sleeps
+// 60 seconds at this point (terraform/modules/hub/apps.tf and eventing.tf). ARM has no sleep, so this is a chain of empty nested
+// deployments: "batchSize(1)" runs them one after the other. It starts when every role this app needs on its own resources
+// exists, including the Event Grid delivery role, and the app, its code and its event subscription all follow it. It narrows the
+// window; it cannot close it: Microsoft documents delays of up to 10 minutes for role assignments and blob data access.
+@batchSize(1)
+module roleWait 'wait.bicep' = [for i in range(0, roleWaitSteps): {
+  name: 'wait-${siteName}-${i}'
+  dependsOn: [
+    blobOwner
+    queueContributor
+    tableContributor
+    metricsPublisher
+    sourceVaultAccess
+    queueSender
+  ]
+}]
+
 // ------------------------------------------------------------------ hosting
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: planName
@@ -328,7 +356,9 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
     }
   }
   dependsOn: [
-    // The platform uses the identity to reach the deployment container, so the roles must exist before the app is created.
+    // The platform uses the identity to reach the deployment container, so the roles must exist, and have taken effect (the
+    // wait), before the app is created.
+    roleWait
     blobOwner
     queueContributor
     tableContributor
@@ -398,7 +428,8 @@ resource queueSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-// Created after the code is deployed, which also gives the role assignment above time to replicate before Event Grid uses it.
+// Created after the wait and after the code is deployed, so the role assignment above has had time to replicate before Event Grid
+// uses it.
 resource eventSubscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2022-06-15' = {
   parent: topic
   name: 'evgs-${label}-${suffix}'

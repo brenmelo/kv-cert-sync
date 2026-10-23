@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "13459752783176668140"
+      "templateHash": "17140482408267248490"
     }
   },
   "parameters": {
@@ -447,7 +447,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "12308903966057182371"
+              "templateHash": "668842412847962400"
             }
           },
           "parameters": {
@@ -1199,7 +1199,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.46.1.21595",
-                      "templateHash": "5756792392090498695"
+                      "templateHash": "1726969853573914626"
                     }
                   },
                   "parameters": {
@@ -1366,6 +1366,7 @@
                     "planName": "[format('plan-{0}-{1}', parameters('label'), parameters('suffix'))]",
                     "containerName": "[format('app-package-{0}', variables('siteName'))]",
                     "storageSuffix": "[environment().suffixes.storage]",
+                    "roleWaitSteps": 30,
                     "roleIds": {
                       "blobOwner": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
                       "queueContributor": "974c5e8b-45b9-4653-ba55-5f855dd0fb88",
@@ -1605,6 +1606,7 @@
                         "[extensionResourceId(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').metricsPublisher))]",
                         "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
                         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').queueContributor))]",
+                        "roleWait",
                         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
                         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').tableContributor))]"
                       ]
@@ -1724,6 +1726,43 @@
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+                      ]
+                    },
+                    {
+                      "copy": {
+                        "name": "roleWait",
+                        "count": "[length(range(0, variables('roleWaitSteps')))]",
+                        "mode": "serial",
+                        "batchSize": 1
+                      },
+                      "type": "Microsoft.Resources/deployments",
+                      "apiVersion": "2025-04-01",
+                      "name": "[format('wait-{0}-{1}', variables('siteName'), range(0, variables('roleWaitSteps'))[copyIndex()])]",
+                      "properties": {
+                        "expressionEvaluationOptions": {
+                          "scope": "inner"
+                        },
+                        "mode": "Incremental",
+                        "template": {
+                          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                          "contentVersion": "1.0.0.0",
+                          "metadata": {
+                            "_generator": {
+                              "name": "bicep",
+                              "version": "0.46.1.21595",
+                              "templateHash": "9483363439713304492"
+                            }
+                          },
+                          "resources": []
+                        }
+                      },
+                      "dependsOn": [
+                        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').blobOwner))]",
+                        "[extensionResourceId(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').metricsPublisher))]",
+                        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').queueContributor))]",
+                        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.EventGrid/systemTopics', parameters('eventTopicName')), variables('roleIds').queueSender))]",
+                        "sourceVaultAccess",
+                        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').tableContributor))]"
                       ]
                     },
                     {
@@ -2410,7 +2449,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.46.1.21595",
-                      "templateHash": "5756792392090498695"
+                      "templateHash": "1726969853573914626"
                     }
                   },
                   "parameters": {
@@ -2577,6 +2616,7 @@
                     "planName": "[format('plan-{0}-{1}', parameters('label'), parameters('suffix'))]",
                     "containerName": "[format('app-package-{0}', variables('siteName'))]",
                     "storageSuffix": "[environment().suffixes.storage]",
+                    "roleWaitSteps": 30,
                     "roleIds": {
                       "blobOwner": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
                       "queueContributor": "974c5e8b-45b9-4653-ba55-5f855dd0fb88",
@@ -2816,6 +2856,7 @@
                         "[extensionResourceId(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').metricsPublisher))]",
                         "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
                         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').queueContributor))]",
+                        "roleWait",
                         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
                         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').tableContributor))]"
                       ]
@@ -2935,6 +2976,43 @@
                       },
                       "dependsOn": [
                         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+                      ]
+                    },
+                    {
+                      "copy": {
+                        "name": "roleWait",
+                        "count": "[length(range(0, variables('roleWaitSteps')))]",
+                        "mode": "serial",
+                        "batchSize": 1
+                      },
+                      "type": "Microsoft.Resources/deployments",
+                      "apiVersion": "2025-04-01",
+                      "name": "[format('wait-{0}-{1}', variables('siteName'), range(0, variables('roleWaitSteps'))[copyIndex()])]",
+                      "properties": {
+                        "expressionEvaluationOptions": {
+                          "scope": "inner"
+                        },
+                        "mode": "Incremental",
+                        "template": {
+                          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                          "contentVersion": "1.0.0.0",
+                          "metadata": {
+                            "_generator": {
+                              "name": "bicep",
+                              "version": "0.46.1.21595",
+                              "templateHash": "9483363439713304492"
+                            }
+                          },
+                          "resources": []
+                        }
+                      },
+                      "dependsOn": [
+                        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').blobOwner))]",
+                        "[extensionResourceId(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').metricsPublisher))]",
+                        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').queueContributor))]",
+                        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.EventGrid/systemTopics', parameters('eventTopicName')), variables('roleIds').queueSender))]",
+                        "sourceVaultAccess",
+                        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').tableContributor))]"
                       ]
                     },
                     {

@@ -130,6 +130,29 @@ def iter_resources(template):
             yield from iter_resources(inner)
 
 
+FUNCTION_APP_BICEP = ROOT / "deploy" / "modules" / "function-app.bicep"
+
+
+def assert_every_app_waits_for_its_role_assignments(test, resources):
+    """ARM has no sleep. Each app is created after a serial chain of empty nested deployments, and that chain starts only when all
+    the roles the app needs on its own resources exist. Without it, the code deployment of one app in one fresh deployment failed
+    with HTTP 403, 26 seconds after the app's last role assignment (we take it that the storage account had not yet honoured the role)."""
+    sites = [r for r in resources if r.get("type") == "Microsoft.Web/sites"]
+    waits = [r for r in resources if r.get("copy", {}).get("name") == "roleWait"]
+    test.assertEqual(len(waits), len(sites), "one wait chain per function app")
+    for w in waits:
+        test.assertEqual(w["type"], "Microsoft.Resources/deployments")
+        test.assertEqual((w["copy"]["mode"], w["copy"]["batchSize"]), ("serial", 1))  # one after the other: in parallel there is no wait
+        test.assertEqual(w["properties"]["template"]["resources"], [], "a wait step creates nothing")
+        for role in ("blobOwner", "queueContributor", "tableContributor", "metricsPublisher", "queueSender"):
+            test.assertTrue(any(role in d for d in w["dependsOn"]), f"the wait does not follow {role}")
+        test.assertIn("sourceVaultAccess", w["dependsOn"])
+    for s in sites:
+        test.assertIn("roleWait", s["dependsOn"])
+    steps = int(re.search(r"^var roleWaitSteps = (\d+)", FUNCTION_APP_BICEP.read_text(encoding="utf-8"), flags=re.M).group(1))
+    test.assertGreaterEqual(steps, 20)  # about 3 seconds each: no less than the 60 seconds that the Terraform module sleeps
+
+
 class Template(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -202,6 +225,9 @@ class Template(unittest.TestCase):
         text = POC_TEMPLATE.read_text(encoding="utf-8")  # each app downloads its own package, named as OneDeploy requires
         self.assertIn("/sync/released-package.zip", text)
         self.assertIn("/renew/released-package.zip", text)
+
+    def test_each_app_waits_for_its_new_role_assignments_before_it_is_created(self):
+        assert_every_app_waits_for_its_role_assignments(self, self.resources)
 
     def test_events_are_delivered_with_managed_identity_to_a_queue(self):
         subs = self.of_type("Microsoft.EventGrid/systemTopics/eventSubscriptions")
@@ -380,6 +406,9 @@ class ProductionTemplate(unittest.TestCase):
         for d in deploys:
             self.assertIn("deployCode", d["condition"])
             self.assertIs(d["properties"]["remoteBuild"], True)
+
+    def test_each_app_waits_for_its_new_role_assignments_before_it_is_created(self):
+        assert_every_app_waits_for_its_role_assignments(self, self.resources)
 
     def test_the_destination_vaults_are_found_through_their_resource_ids_in_any_subscription(self):
         access = [r for r in self.template["resources"] if "kvsync-access" in r["name"]]
