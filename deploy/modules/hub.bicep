@@ -298,6 +298,9 @@ module syncApp 'function-app.bicep' = {
     operatorObjectId: operatorObjectId
     operatorPrincipalType: operatorPrincipalType
   }
+  dependsOn: [
+    peVault // private mode: the first sweep reads the source vault, which is reachable only through this private endpoint
+  ]
 }
 
 module renewApp 'function-app.bicep' = if (enableRenewApp) {
@@ -330,6 +333,9 @@ module renewApp 'function-app.bicep' = if (enableRenewApp) {
     operatorObjectId: operatorObjectId
     operatorPrincipalType: operatorPrincipalType
   }
+  dependsOn: [
+    peVault // private mode: the first sweep reads the source vault, which is reachable only through this private endpoint
+  ]
 }
 
 // ------------------------------------------------------------------ alerting (created only when alertEmailAddresses is not empty)

@@ -6,6 +6,8 @@
 //   * Event Grid delivery into that queue (send-only, with the managed identity of the Event Grid system topic),
 //   * the identity's roles on the source vault,
 //   * a wait of about 95 seconds, so that these new role assignments have time to take effect before the app is created,
+//   * in private mode, the private endpoints of its storage account, so that they exist before the app is created, and the
+//     private endpoint of the app itself, so that its name resolves before its code is deployed,
 //   * a Flex Consumption plan (Linux, Python 3.12) and the function app,
 //   * its code, deployed from a package URL with the "OneDeploy" extension (a remote build installs requirements.txt).
 //
@@ -365,6 +367,13 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
     metricsPublisher
     deployContainer
     eventQueue
+    // Private mode: the app is VNet-integrated and its host reaches its storage account only through these private endpoints
+    // and their DNS records, so they come first. In the first fresh deployment the app was created only 18 seconds after the
+    // last of these DNS records had been written: the order was right by chance and not by dependency
+    // (docs/TEST-REPORT.md, section 10.2).
+    peBlob
+    peQueue
+    peTable
   ]
 }
 
@@ -380,6 +389,11 @@ resource oneDeploy 'Microsoft.Web/sites/extensions@2022-09-01' = if (deployCode)
   }
   dependsOn: [
     sourceVaultAccess // the code starts only after the identity has its roles on the source vault
+    // Private mode: the platform ends a code deployment by calling the app by its name, and in a private network that name
+    // resolves only once the app's private endpoint and its DNS record exist. Without this ordering a fresh production
+    // deployment failed on both apps, a second after the DNS records of the apps' own private endpoints had been written
+    // (docs/TEST-REPORT.md, section 10.2).
+    peSites
   ]
 }
 

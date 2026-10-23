@@ -153,6 +153,36 @@ def assert_every_app_waits_for_its_role_assignments(test, resources):
     test.assertGreaterEqual(steps, 20)  # about 3 seconds each: no less than the 60 seconds that the Terraform module sleeps
 
 
+def assert_private_endpoints_exist_before_what_needs_them(test, resources):
+    """In private mode a name resolves only once the private endpoint module has written its DNS record, and ARM does not know that a
+    resource needs a name to resolve, so each dependency is written down. In the first fresh deployment of the production template both
+    apps failed at the end of their code deployment, about a second after the DNS record of the app's own private endpoint had been
+    written (docs/TEST-REPORT.md, section 10.2). The same applies, by the same reasoning and not seen to fail, to the app's storage
+    account and to the source vault. In public mode these modules are skipped, and so are the dependencies."""
+    def follows(resource, endpoint):
+        prefix = "[resourceId('Microsoft.Resources/deployments', format('%s" % endpoint
+        return any(d.startswith(prefix) for d in resource.get("dependsOn", []))
+
+    modules = [str(r.get("name", "")) for r in resources if r.get("type") == "Microsoft.Resources/deployments"]
+    for endpoint in ("pe-blob-", "pe-queue-", "pe-table-", "pe-sites-", "pe-vault-source-"):
+        test.assertTrue(any(m.startswith("[format('" + endpoint) for m in modules), f"no {endpoint} module to depend on")
+
+    sites = [r for r in resources if r.get("type") == "Microsoft.Web/sites"]
+    code = [r for r in resources if r.get("type") == "Microsoft.Web/sites/extensions"]
+    apps = [r for r in resources if r.get("type") == "Microsoft.Resources/deployments" and "app-kv" in str(r.get("name", ""))]
+    test.assertEqual((len(sites), len(code), len(apps)), (2, 2, 2))
+    missing = []
+    for s in sites:  # the host reaches its storage only through the three endpoints, and starts when the code is deployed
+        missing += [f"the app is created before {e}" for e in ("pe-blob-", "pe-queue-", "pe-table-") if not follows(s, e)]
+    for c in code:  # the call that ends the deployment goes to the app's own name
+        if not follows(c, "pe-sites-"):
+            missing.append("the code is deployed before pe-sites-")
+    for a in apps:  # the first sweep reads the source vault
+        if not follows(a, "pe-vault-source-"):
+            missing.append("the app module starts before pe-vault-source-")
+    test.assertEqual(missing, [], "a private endpoint is not waited for")
+
+
 class Template(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -228,6 +258,9 @@ class Template(unittest.TestCase):
 
     def test_each_app_waits_for_its_new_role_assignments_before_it_is_created(self):
         assert_every_app_waits_for_its_role_assignments(self, self.resources)
+
+    def test_private_endpoints_exist_before_what_needs_them(self):
+        assert_private_endpoints_exist_before_what_needs_them(self, self.resources)
 
     def test_events_are_delivered_with_managed_identity_to_a_queue(self):
         subs = self.of_type("Microsoft.EventGrid/systemTopics/eventSubscriptions")
@@ -409,6 +442,9 @@ class ProductionTemplate(unittest.TestCase):
 
     def test_each_app_waits_for_its_new_role_assignments_before_it_is_created(self):
         assert_every_app_waits_for_its_role_assignments(self, self.resources)
+
+    def test_private_endpoints_exist_before_what_needs_them(self):
+        assert_private_endpoints_exist_before_what_needs_them(self, self.resources)
 
     def test_the_destination_vaults_are_found_through_their_resource_ids_in_any_subscription(self):
         access = [r for r in self.template["resources"] if "kvsync-access" in r["name"]]

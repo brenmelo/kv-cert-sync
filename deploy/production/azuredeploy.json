@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "17140482408267248490"
+      "templateHash": "11964539077874825011"
     }
   },
   "parameters": {
@@ -447,7 +447,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "668842412847962400"
+              "templateHash": "12726795309333282450"
             }
           },
           "parameters": {
@@ -1199,7 +1199,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.46.1.21595",
-                      "templateHash": "1726969853573914626"
+                      "templateHash": "7809269709384201949"
                     }
                   },
                   "parameters": {
@@ -1604,6 +1604,9 @@
                         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', parameters('queueName'))]",
                         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]",
                         "[extensionResourceId(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').metricsPublisher))]",
+                        "[resourceId('Microsoft.Resources/deployments', format('pe-blob-{0}-{1}', parameters('label'), parameters('suffix')))]",
+                        "[resourceId('Microsoft.Resources/deployments', format('pe-queue-{0}-{1}', parameters('label'), parameters('suffix')))]",
+                        "[resourceId('Microsoft.Resources/deployments', format('pe-table-{0}-{1}', parameters('label'), parameters('suffix')))]",
                         "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
                         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').queueContributor))]",
                         "roleWait",
@@ -1621,6 +1624,7 @@
                         "remoteBuild": true
                       },
                       "dependsOn": [
+                        "[resourceId('Microsoft.Resources/deployments', format('pe-sites-{0}-{1}', parameters('label'), parameters('suffix')))]",
                         "[resourceId('Microsoft.Web/sites', variables('siteName'))]",
                         "sourceVaultAccess"
                       ]
@@ -2352,6 +2356,7 @@
               },
               "dependsOn": [
                 "[resourceId('Microsoft.Insights/components', format('appi-kvsync-{0}', parameters('suffix')))]",
+                "[resourceId('Microsoft.Resources/deployments', format('pe-vault-source-{0}', parameters('suffix')))]",
                 "[resourceId('Microsoft.KeyVault/vaults', format('kv-src-{0}', parameters('suffix')))]",
                 "[resourceId('Microsoft.EventGrid/systemTopics', format('evgt-kv-src-{0}', parameters('suffix')))]"
               ]
@@ -2449,7 +2454,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.46.1.21595",
-                      "templateHash": "1726969853573914626"
+                      "templateHash": "7809269709384201949"
                     }
                   },
                   "parameters": {
@@ -2854,6 +2859,9 @@
                         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', parameters('queueName'))]",
                         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]",
                         "[extensionResourceId(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').metricsPublisher))]",
+                        "[resourceId('Microsoft.Resources/deployments', format('pe-blob-{0}-{1}', parameters('label'), parameters('suffix')))]",
+                        "[resourceId('Microsoft.Resources/deployments', format('pe-queue-{0}-{1}', parameters('label'), parameters('suffix')))]",
+                        "[resourceId('Microsoft.Resources/deployments', format('pe-table-{0}-{1}', parameters('label'), parameters('suffix')))]",
                         "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
                         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName')), variables('roleIds').queueContributor))]",
                         "roleWait",
@@ -2871,6 +2879,7 @@
                         "remoteBuild": true
                       },
                       "dependsOn": [
+                        "[resourceId('Microsoft.Resources/deployments', format('pe-sites-{0}-{1}', parameters('label'), parameters('suffix')))]",
                         "[resourceId('Microsoft.Web/sites', variables('siteName'))]",
                         "sourceVaultAccess"
                       ]
@@ -3602,6 +3611,7 @@
               },
               "dependsOn": [
                 "[resourceId('Microsoft.Insights/components', format('appi-kvsync-{0}', parameters('suffix')))]",
+                "[resourceId('Microsoft.Resources/deployments', format('pe-vault-source-{0}', parameters('suffix')))]",
                 "[resourceId('Microsoft.KeyVault/vaults', format('kv-src-{0}', parameters('suffix')))]",
                 "[resourceId('Microsoft.EventGrid/systemTopics', format('evgt-kv-src-{0}', parameters('suffix')))]"
               ]
